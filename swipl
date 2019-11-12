@@ -1,0 +1,1 @@
+docker run --rm -it -v /Users/brosenan/nutrino:/home/boaz brosenan/swipl swipl $*
