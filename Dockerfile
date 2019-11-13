@@ -1,7 +1,8 @@
 FROM swipl
 
-ARG USER_NAME=boaz
-ARG USER_HOME=/home/boaz
+ARG USER_NAME=user
+ARG USER_HOME=/home/user
+# Put your local user-ID here.
 ARG USER_ID=639163
 ARG USER_GECOS=LaTeX
 
@@ -12,5 +13,4 @@ RUN adduser \
   --disabled-password \
   "$USER_NAME"
 
-WORKDIR /home/boaz
-
+WORKDIR /home/user
