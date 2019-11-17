@@ -28,6 +28,20 @@ Four
     @mock.patch('subprocess.run')
     def test_successful_compilation(self, run_mock):
         run_mock.return_value = subprocess.CompletedProcess([], returncode=0)
+        code = "Some code..."
+        test = neutrino_testing.SuccessTest(code)
+        self.assertTrue(test.run())
+        with open("test.pl") as f:
+            self.assertEqual(f.read(), code)
+        run_mock.assert_called_with(["./swipl", "-f", "neutrino.pl", 
+                                     "-t", "run('test.pl')"])
+
+    @mock.patch('subprocess.run')
+    def test_successful_compilation_failure(self, run_mock):
+        run_mock.return_value = subprocess.CompletedProcess([], returncode=2)
+        code = "Some code..."
+        test = neutrino_testing.SuccessTest(code)
+        self.assertFalse(test.run())
 
 
 if __name__ == "__main__":

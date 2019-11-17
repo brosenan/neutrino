@@ -1,4 +1,5 @@
 import re
+import subprocess
 
 def extract_code(md):
     state = "NORMAL"
@@ -24,6 +25,12 @@ def extract_code(md):
 class SuccessTest:
     def __init__(self, code):
         self.code = code
+    def run(self):
+        with open("test.pl", "w") as f:
+            f.write(self.code)
+        result = subprocess.run(["./swipl", "-f", "neutrino.pl", 
+                                 "-t", "run('test.pl')"])
+        return result.returncode == 0
 
 def parse(spec_file_name):
     with open(spec_file_name, "r") as f:
