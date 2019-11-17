@@ -22,3 +22,17 @@ Of course, further ```prolog``` code fragments are not considered tests.
 ```prolog
 % This is not a test.
 ```
+
+## Failed Compilation
+
+A `prolog` code block followed (immediately) by an `error` code block defines a test where the code in the `prolog` block fails to compile, and the compiler emits an error that contains the text in the `error` block.
+
+For example:
+
+```prolog
+% This code should fail to compile.
+```
+
+```error
+This text must appear in the error.
+```
