@@ -1,4 +1,5 @@
 import neutrino_testing
+import os
 import unittest
 from unittest import mock
 import subprocess
@@ -36,7 +37,7 @@ Four
         self.assertTrue(test.run())
         with open("test.pl") as f:
             self.assertEqual(f.read(), code)
-        run_mock.assert_called_with(["./swipl", "-f", "neutrino.pl", 
+        run_mock.assert_called_with(["%s/swipl" % os.getcwd(), "-f", "neutrino.pl", 
                                      "-t", "run('test.pl')"])
 
     @mock.patch('subprocess.run')
@@ -56,7 +57,7 @@ Four
         self.assertTrue(test.run())
         with open("test.pl") as f:
             self.assertEqual(f.read(), code)
-        run_mock.assert_called_with(["./swipl", "-f", "neutrino.pl", 
+        run_mock.assert_called_with(["%s/swipl" % os.getcwd(), "-f", "neutrino.pl", 
                                      "-t", "run('test.pl')"], stderr=subprocess.PIPE)
 
     @mock.patch('subprocess.run')
