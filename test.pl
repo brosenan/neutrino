@@ -1,1 +1,2 @@
-assert 1.0 + 1.0 == 2.
+declare f(float64) -> float64.
+f(X) := X+2.
