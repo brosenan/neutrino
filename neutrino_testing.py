@@ -25,13 +25,15 @@ def extract_code(md):
                 code += line + "\n"
 
 class SuccessTest:
-    def __init__(self, code):
+    def __init__(self, code, index):
         self.code = code
+        self.test_file = "test%d.pl" % index
+
     def run(self):
-        with open("test.pl", "w") as f:
+        with open(self.test_file, "w") as f:
             f.write(self.code)
         result = subprocess.run(["%s/swipl" % os.getcwd(), "-f", "neutrino.pl", 
-                                 "-t", "run('test.pl')"])
+                                 "-t", "run('%s')" % self.test_file])
         if result.returncode != 0:
             print("### Compilation should have succeeded, but failed with status %d.\nCode: %s\nOutput: %s"
                   % (result.returncode, self.code, result.stderr))
@@ -40,15 +42,16 @@ class SuccessTest:
             return True
 
 class FailureTest:
-    def __init__(self, code, error):
+    def __init__(self, code, error, index):
         self.code = code
         self.error = error
+        self.test_file = "test%d.pl" % index
 
     def run(self):
-        with open("test.pl", "w") as f:
+        with open(self.test_file, "w") as f:
             f.write(self.code)
         result = subprocess.run(["%s/swipl" % os.getcwd(), "-f", "neutrino.pl", 
-                                 "-t", "run('test.pl')"], stderr=subprocess.PIPE)
+                                 "-t", "run('%s')" % self.test_file], stderr=subprocess.PIPE)
         if result.returncode == 0:
             print("### Expected compilation to fail but it succeeded.\nCode: %s" % self.code)
             return False
@@ -64,7 +67,7 @@ def parse(spec_file_name):
     with open(spec_file_name, "r") as f:
         md = f.read()
     state = "NORMAL"
-    for elem in extract_code(md):
+    for index, elem in enumerate(extract_code(md)):
         if state == "NORMAL":
             if isinstance(elem, tuple) and elem[0] == "prolog":
                 state = "PROLOG"
@@ -73,19 +76,19 @@ def parse(spec_file_name):
             if isinstance(elem, tuple):
                 lang, code = elem
                 if lang == "prolog":
-                    yield SuccessTest(code)
+                    yield SuccessTest(code, index)
                 state = "NORMAL"
             else:
                 state = "NORMAL"
         elif state == "PROLOG":
             if isinstance(elem, tuple) and elem[0] == "error":
-                yield FailureTest(prolog_code, elem[1].strip())
+                yield FailureTest(prolog_code, elem[1].strip(), index)
             state = "NORMAL"
         if isinstance(elem, str) and re.match(".*compile.* successfully.*:$", elem):
             state = "SUCC"
 
 if __name__ == "__main__":
-    tests = list(parse(sys.argv[1]))
+    tests = [test for filename in sys.argv[1:] for test in parse(filename)]
     passed = 0
     failed = 0
     for test in tests:

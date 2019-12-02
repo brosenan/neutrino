@@ -1,2 +1,2 @@
 #!/bin/sh
-docker run --rm -i -v /Users/brosenan/nutrino:/home/boaz brosenan/swipl swipl $*
+docker run --rm -i -v /Users/brosenan/neutrino:/home/boaz brosenan/swipl swipl $*

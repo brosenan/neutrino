@@ -1,0 +1,103 @@
+# Union Types and Case Expressions
+
+Union types are types that hold different data alternatives. For example, the following definition compiles successfully:
+
+```prolog
+union num_or_str = num(int64) + str(string).
+```
+
+This definition defines a new type, `num_or_str`, which represents either an `int64` number (`num(int64)`), or a string (`str(string)`).
+
+The different options may have zero or more parameters, which need to all be types. For example, the following will fail:
+
+```prolog
+union num_or_str = num(3) + str("foo").
+```
+
+```error
+Expected type, found 3.
+```
+
+## Parametric Union Types
+
+Union types can be parametric, and depend on other types. A simple example is a binary tree, where the type of the value held in the leafs is given as parameter.
+
+The following compiles successfully:
+
+```prolog
+union tree(T) = leaf(T) + node(tree(T), tree(T)).
+```
+
+Type parameters must be free variables.
+
+```prolog
+union foo_type(X, 42) = foo + bar.
+```
+
+```error
+Expected variable, found 42.
+```
+
+As in the `tree` example, variables are allowed in the right-hand-side of the definition. However, only variables that are introduced in the left-hand-side are allowed.
+
+```prolog
+union foo_type(X) = foo(Y) + bar(Z).
+```
+
+```error
+Variable Y is not introduced in the definition of foo_type.
+```
+
+## Case Expressions
+
+Case expressions provide a way to test a union-type value against its different options. For example, the following code defines a union type `foobar` that can either be `foo` or `bar`. Then a `case` expression over `foo` maps `foo` to `true` and `bar` to `false`.
+
+The following compiles successfully:
+
+```prolog
+union foobar = foo + bar.
+assert case foo of {
+    foo => true;
+    bar => false
+}.
+```
+
+Case expressions only work for union types. Using them on other types (e.g., numbers) will fail to compile.
+
+```prolog
+assert case 2 of {
+    1 => false;
+    2 => true
+}.
+```
+
+```error
+Expected union type expression. Found 2 of non-union type int64.
+```
+
+The mapping enclosed in the braces should reference all the options defined for the type.
+
+```prolog
+union foobar = foo + bar.
+assert case foo of {
+    foo => true
+}.
+```
+
+```error
+Incomplete case expression for type foobar. Missing cases: bar.
+```
+
+Additionally, they have to appear in the order in which they were defined.
+
+```prolog
+union foobar = foo + bar.
+assert case foo of {
+    bar => false;
+    foo => true
+}.
+```
+
+```error
+Expected case foo, found bar.
+```
