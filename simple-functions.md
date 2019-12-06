@@ -65,3 +65,40 @@ f(X) := X+2.
 ```error
 Type mismatch. Expression X::int64 expected to be float64, inferred: int64.
 ```
+
+## Linear Typing
+
+[Linear type systems](https://en.wikipedia.org/wiki/Substructural_type_system#Linear_type_systems) are type systems that make sure objects are being used only once. Being linearly typed gives Neutrino much of its power in terms of performance.
+
+As in probably every other functional programming language, a variable (of any type) must be used at most once in the function's header.
+
+```prolog
+declare f(int64, int64) -> int64.
+f(A, A) := A.
+```
+
+```error
+Variable A has already been introduced in this context.
+```
+
+Also like other languages, variables used in the body of a function must be first introduced in its head (or in a [case expression](unions.md#case-expressions).
+
+```prolog
+declare f(int64) -> int64.
+f(A) := B.
+```
+
+```error
+Variable B has not been introduced in this context.
+```
+
+What makes linear typing unique is the restriction on non-basic types (types other than numbers or Booleans) to be used only once. The following function is illegal, because the string `S` is being used twice in its body.
+
+```prolog
+declare f(string) -> bool.
+f(S) := S == S.
+```
+
+```error
+Variable S of non-basic type string is used more than once.
+```

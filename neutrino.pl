@@ -26,21 +26,25 @@ run(SourceFile) :-
     compileAll(SourceFile, S, Term, VNs).
 
 compileAll(SourceFile, S, Term, VNs) :-
-    Term == end_of_file -> true;
-    catch(
-        (
-            compileStatement(Term, VNs)
-        ),
-        Exception,
-        (
-            line_count(S, Line),
-            (formatError(Exception, ExceptionText) -> true; 
-                ExceptionText = [Exception]),
-            writeln_list(user_error, [SourceFile, ":", Line, ": " | ExceptionText]),
-            halt(1)
-        )),
-    read_term(S, NextTerm, [variable_names(NextVNs)]),
-    compileAll(SourceFile, S, NextTerm, NextVNs).
+    Term == end_of_file ->
+        true
+        ;
+        catch(
+            (
+                compileStatement(Term, VNs)
+            ),
+            Exception,
+            (
+                line_count(S, Line),
+                (formatError(Exception, ExceptionText) ->
+                    true
+                    ; 
+                    ExceptionText = [Exception]),
+                writeln_list(user_error, [SourceFile, ":", Line, ": " | ExceptionText]),
+                halt(1)
+            )),
+        read_term(S, NextTerm, [variable_names(NextVNs)]),
+        compileAll(SourceFile, S, NextTerm, NextVNs).
 
 compileStatement((assert Expr), VNs) :-
     nameVars(VNs),
@@ -58,7 +62,9 @@ compileStatement((Func := Body), VNs) :-
         matchType(Type, SigType, Body)
         ;
         validateArgTypes(Args),
-        assert(type_signature(Name, ArgTypes, Type, []))).
+        assert(type_signature(Name, ArgTypes, Type, []))),
+    walk(Func, stateMap(readVars), [], VarState),
+    walk(Body, stateMap(writeVars), VarState, _).
 
 compileStatement((declare Func -> Type), _VNs) :-
     Func =.. [Name | ArgTypes],
@@ -109,6 +115,12 @@ formatError(case_arity_mismatch(OpName, PatternArity, TyOpArity),
      ". Found arity of ", PatternArity, "."]).
 formatError(not_lvalue(LValue, Type),
     ["Expected l-value of type ", Type, ". Found ", LValue, "."]).
+formatError(var_already_introduced(Var),
+    ["Variable ", Var, " has already been introduced in this context."]).
+formatError(var_not_introduced(Var),
+    ["Variable ", Var, " has not been introduced in this context."]).
+formatError(var_used_more_than_once(Var, Type),
+    ["Variable ", Var, " of non-basic type ", Type, " is used more than once."]).
 
 writeln_list(S, [First | Rest]) :-
     write(S, First),
@@ -177,9 +189,12 @@ validateType(T) :-
         true;
         throw(type_expected(T)).
 
-type(int64).
+type(Type) :- basicType(Type).
 type(string).
 type(_::type(_)).
+
+basicType(int64).
+basicType(float64).
 
 validateVars([]).
 validateVars([Var | Vars]) :-
@@ -342,3 +357,14 @@ stateMap(Pred, Key, [Key1=StateIn | RestIn], [Key1=StateOut | RestOut]) :-
         ;
         StateIn = StateOut,
         stateMap(Pred, Key, RestIn, RestOut)).
+
+readVars(_::_, default, new).
+readVars(Var::_, new, _) :-
+    throw(var_already_introduced(Var)).
+
+writeVars(Var::_, default, _) :-
+    throw(var_not_introduced(Var)).
+writeVars(_::Type, new, consumed) :-
+    \+basicType(Type).
+writeVars(Var::Type, consumed, _) :-
+    throw(var_used_more_than_once(Var, Type)).
