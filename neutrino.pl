@@ -72,7 +72,7 @@ compileStatement((union Union = Options), VNs) :-
     assert(union_type(Union, Options)),
     nameVars(VNs),
     verifyTypeVariables(Args),
-    walk(Options, verifyVarIsType(Name)),
+    walk(Options, verifyVarIsType(Name), [], _),
     validateOptions(Options).
 
 inferType(_::T, T).
@@ -191,26 +191,11 @@ validateVar(Var) :-
         true;
         throw(var_expected(Var)).
 
-walk(Term, Functor) :-
-    call(Functor, Term),
-    compound(Term) ->
-        Term =.. [_ | Args],
-        walkArgs(Args, Functor)
-        ;
-        true.
-
-walkArgs([], _).
-walkArgs([First | Rest], Functor) :-
-    walk(First, Functor),
-    walkArgs(Rest, Functor).
-
-verifyVarIsType(TypeName, X) :-
-    (compound(X),
-    X = Name :: Kind ->
-        (var(Kind) ->
-            throw(var_not_introduced(Name, TypeName))
-            ;
-            true)
+verifyVarIsType(TypeName, X, _, _) :-
+    compound(X),
+    X = Name :: Kind,
+    (var(Kind) ->
+        throw(var_not_introduced(Name, TypeName))
         ;
         true).
 
@@ -281,3 +266,79 @@ validateLValue(LValue, Type) :-
         true
         ;
         throw(not_lvalue(LValue, Type)).
+
+
+fake_simpleWalkPredicate(2, a, b).
+
+:- begin_tests(walk).
+
+test(walk_simple) :-
+    walk(2, fake_simpleWalkPredicate, a, B),
+    B == b.
+
+test(walk_not_matching_anything) :-
+    walk(4, fake_simpleWalkPredicate, a, A),
+    A == a.
+
+test(walk_compund) :-
+    walk(foo(2, 3), fake_simpleWalkPredicate, a, B),
+    B == b.
+
+test(walk_compund_matching_second_arg) :-
+    walk(foo(3, 2), fake_simpleWalkPredicate, a, B),
+    B == b.
+
+:- end_tests(walk).
+
+walk(Term, Pred, Start, End) :-
+    call(Pred, Term, Start, End) ->
+        true
+        ;
+        (compound(Term) ->
+            Term =.. [_ | Args],
+            walkArgs(Args, Pred, Start, End)
+        ;
+        Start = End).
+
+walkArgs([], _, State, State).
+walkArgs([First | Rest], Pred, Start, End) :-
+    walk(First, Pred, Start, Mid),
+    walkArgs(Rest, Pred, Mid, End).
+
+fake_transition(_, default, a).
+fake_transition(Key, a, b(Key)).
+fake_transition(Key, b(_), c).
+
+:- begin_tests(stateMap).
+
+% In an empty state, the key is added with the default value.
+test(new_key) :-
+    stateMap(fake_transition, x, [], L),
+    L == [x=a].
+
+% If there is already a state for that key, it is transformed
+% using the transition predicate
+test(existing_key) :-
+    stateMap(fake_transition, y, [x=a, y=a], L),
+    L == [x=a, y=b(y)].
+
+% If the transition predicate fails, do not transition.
+test(no_transition) :-
+    stateMap(fake_transition, x, [x=p, y=a], L),
+    L == [x=p, y=a].
+
+:- end_tests(stateMap).
+
+stateMap(Pred, Key, [], [Key=Default]) :-
+    call(Pred, Key, default, Default).
+
+stateMap(Pred, Key, [Key1=StateIn | RestIn], [Key1=StateOut | RestOut]) :-
+    (Key = Key1 ->
+        (call(Pred, Key, StateIn, StateOut) ->
+            true
+            ;
+            StateIn = StateOut),
+        RestIn = RestOut
+        ;
+        StateIn = StateOut,
+        stateMap(Pred, Key, RestIn, RestOut)).
