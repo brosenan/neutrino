@@ -42,7 +42,8 @@ compileAll(SourceFile, S, Term, VNs) :-
     read_term(S, NextTerm, [variable_names(NextVNs)]),
     compileAll(SourceFile, S, NextTerm, NextVNs).
 
-compileStatement((assert Expr), _VNs) :-
+compileStatement((assert Expr), VNs) :-
+    nameVars(VNs),
     inferType(Expr, Type),
     matchType(Type, bool, Expr).
 
@@ -103,7 +104,11 @@ formatError(incomplete_case_expr(Options, Type),
      ". Missing cases: ", Options, "."]).
 formatError(case_mismatch(TyOpName, OpName),
     ["Expected case ", TyOpName, ", found ", OpName, "."]).
-
+formatError(case_arity_mismatch(OpName, PatternArity, TyOpArity),
+    ["Expected ", OpName, " to have an arity of ", TyOpArity,
+     ". Found arity of ", PatternArity, "."]).
+formatError(not_lvalue(LValue, Type),
+    ["Expected l-value of type ", Type, ". Found ", LValue, "."]).
 
 writeln_list(S, [First | Rest]) :-
     write(S, First),
@@ -114,6 +119,8 @@ writeln_list(S, []) :-
 
 type_signature(==, [T, T], bool, []).
 type_signature(+, [T, T], T, []).
+type_signature(true, [], bool, []).
+type_signature(false, [], bool, []).
 
 inferType(Term, Type) :-
     inferTypeSpecial(Term, Type) ->
@@ -224,7 +231,7 @@ inferTypeSpecial(case Expr of {Options}, OutType) :-
         true
         ;
         throw(bad_union_type(InType, Expr))),
-    validateCaseOptions(Options, TypeOptions, InType).
+    validateCaseOptions(Options, TypeOptions, InType, OutType).
 
 assertOptionSignatures(Options, Type) :-
     callable(Options),
@@ -235,16 +242,42 @@ assertOptionSignatures(Options, Type) :-
         Options =.. [Name | Args],
         assert(type_signature(Name, Args, Type, [])).
 
-validateCaseOptions(Options, TypeOptions, Type) :-
+validateCaseOptions(Options, TypeOptions, Type, OutType) :-
     TypeOptions = TyOp1 + TyOp2 ->
         (Options = (Pattern1 => Value1; Op2) ->
-            Pattern1 =.. [Op1Name | _],
-            TyOp1 =.. [TyOp1Name | _],
-            (Op1Name == TyOp1Name ->
-                true
-                ;
-                throw(case_mismatch(TyOp1Name, Op1Name)))
+            validateCaseOption(Pattern1, Value1, TyOp1, OutType),
+            validateCaseOptions(Op2, TyOp2, Type, OutType)
             ;
             throw(incomplete_case_expr(TyOp2, Type)))
         ;
-        true.
+        !(Options = (Pattern => Value)),
+        validateCaseOption(Pattern, Value, TypeOptions, OutType).
+
+validateCaseOption(Pattern, Value, Option, OutType) :-
+    Pattern =.. [PatternName | PatternArgs],
+    Option =.. [OptionName | OptionArgs],
+    (OptionName == PatternName ->
+        true
+        ;
+        throw(case_mismatch(OptionName, PatternName))),
+    length(PatternArgs, PatternArity),
+    length(OptionArgs, OptionArity),
+    (PatternArity == OptionArity ->
+        true
+        ;
+        throw(case_arity_mismatch(OptionName, PatternArity, OptionArity))),
+    validateLValues(PatternArgs, OptionArgs),
+    inferType(Pattern, _),
+    inferType(Value, ValueType),
+    matchType(ValueType, OutType, Value).
+
+validateLValues([], []).
+validateLValues([LValue | LValues], [Type | Types]) :-
+    validateLValue(LValue, Type),
+    validateLValues(LValues, Types).
+
+validateLValue(LValue, Type) :-
+    LValue = (_::_) ->
+        true
+        ;
+        throw(not_lvalue(LValue, Type)).

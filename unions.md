@@ -101,3 +101,90 @@ assert case foo of {
 ```error
 Expected case foo, found bar.
 ```
+
+### Case Expressions over Union Types with Data
+
+When working on a union type with data elements, the case expression binds these data elements to variables.
+
+The following compiles successfully:
+
+```prolog
+union num_or_str = num(int64) + str(string).
+assert case num(3) of {
+    num(N) => N == 3;
+    str(S) => false
+}.
+```
+
+In the above example, the value `num(3)` is matched against either the pattern `num(N)` (which it matches), or the pattern `str(S)`, which it doesn't. For `num(N)` we check that the value bound by `N` is indeed 3, and for `str(S)` we simply return `false`.
+
+In such `case` expressions, the arity (number of arguments) of each pattern must match its definition in the union type.
+
+```prolog
+union num_or_str = num(int64) + str(string).
+assert case num(3) of {
+    num(N1, N2) => N1 == 3;
+    str(S) => false
+}.
+```
+
+```error
+Expected num to have an arity of 1. Found arity of 2.
+```
+
+The pattern arguments themselves must be _l-value_, which in the case of simple types such as `int64` and `string` (as in the case of union types), consists only of variables.
+
+```prolog
+union num_or_str = num(int64) + str(string).
+assert case num(3) of {
+    num(N) => N == 3;
+    str("hello") => false
+}.
+```
+
+```error
+Expected l-value of type string. Found hello.
+```
+
+A `case` expression evaluates to the value at the right-hand side of the `=>` operator on the branch that matches the pattern. Its branches need to have the same type.
+
+```prolog
+union num_or_str = num(int64) + str(string).
+assert case num(3) of {
+    num(N) => N == 3;
+    str(S) => 42
+}.
+```
+
+```error
+Type mismatch. Expression 42 expected to be bool, inferred: int64.
+```
+
+The variables bound by the patterns are typed according to the union type definition.
+
+```prolog
+union num_or_str = num(int64) + str(string).
+assert case num(3) of {
+    num(N) => N == 3;
+    str(S) => S == 4
+}.
+```
+
+```error
+Type mismatch. Expression 4 expected to be string, inferred: int64.
+```
+
+Ultimately, the type of all branches must match the type expected for the whole expression.
+
+```prolog
+union num_or_str = num(int64) + str(string).
+assert case num(3) of {
+    num(N) => N;
+    str(S) => 42
+}.
+```
+
+```error
+Type mismatch. Expression case num(3)of{num(N::int64)=>N::int64;str(S::string)=>42} expected to be bool, inferred: int64.
+```
+
