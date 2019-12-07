@@ -65,8 +65,8 @@ compileStatement((Func := Body), VNs) :-
         ;
         validateArgTypes(Args),
         assert(type_signature(Name, ArgTypes, Type, []))),
-    walk(Func, stateMap(readVars), [], VarStateBeforeBody),
-    walk(Body, stateMap(writeVars), VarStateBeforeBody, VarStateAfterBody),
+    walk(Func, stateMap(introduceVars), [], VarStateBeforeBody),
+    walk(Body, stateMap(consumeVars), VarStateBeforeBody, VarStateAfterBody),
     transitionAll(removeVars, VarStateAfterBody, _).
 
 compileStatement((declare Func -> Type), _VNs) :-
@@ -388,15 +388,15 @@ transitionAll(Transition, [Key=ValueIn | RestIn], [Key=ValueOut | RestOut]) :-
         ValueIn = ValueOut),
     transitionAll(Transition, RestIn, RestOut).
 
-readVars(_::_, default, new).
-readVars(Var::_, new, _) :-
+introduceVars(_::_, default, new).
+introduceVars(Var::_, new, _) :-
     throw(var_already_introduced(Var)).
 
-writeVars(Var::_, default, _) :-
+consumeVars(Var::_, default, _) :-
     throw(var_not_introduced(Var)).
-writeVars(_::Type, new, consumed) :-
+consumeVars(_::Type, new, consumed) :-
     \+basicType(Type).
-writeVars(Var::Type, consumed, _) :-
+consumeVars(Var::Type, consumed, _) :-
     throw(var_used_more_than_once(Var, Type)).
 
 removeVars(Var::Type, new, _) :-
