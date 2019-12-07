@@ -53,9 +53,11 @@ compileStatement((assert Expr), VNs) :-
 
 compileStatement((Func := Body), VNs) :-
     nameVars(VNs),
+    walk(Func, replaceSingletosWithDelete, [], _),
     Func =.. [Name | Args],
     inferType(Body, Type),
     inferTypes(Args, ArgTypes),
+    validateLValues(Args, ArgTypes),
     sameLength(ArgTypes, SigArgTypes),
     (type_signature(Name, SigArgTypes, SigType, []) ->
         matchTypes(ArgTypes, SigArgTypes, Args),
@@ -63,8 +65,9 @@ compileStatement((Func := Body), VNs) :-
         ;
         validateArgTypes(Args),
         assert(type_signature(Name, ArgTypes, Type, []))),
-    walk(Func, stateMap(readVars), [], VarState),
-    walk(Body, stateMap(writeVars), VarState, _).
+    walk(Func, stateMap(readVars), [], VarStateBeforeBody),
+    walk(Body, stateMap(writeVars), VarStateBeforeBody, VarStateAfterBody),
+    transitionAll(removeVars, VarStateAfterBody, _).
 
 compileStatement((declare Func -> Type), _VNs) :-
     Func =.. [Name | ArgTypes],
@@ -121,6 +124,8 @@ formatError(var_not_introduced(Var),
     ["Variable ", Var, " has not been introduced in this context."]).
 formatError(var_used_more_than_once(Var, Type),
     ["Variable ", Var, " of non-basic type ", Type, " is used more than once."]).
+formatError(var_not_used(Var, Type),
+    ["Variable ", Var, " of non-basic type ", Type, " is not used in this context."]).
 
 writeln_list(S, [First | Rest]) :-
     write(S, First),
@@ -233,6 +238,8 @@ inferTypeSpecial(case Expr of {Options}, OutType) :-
         throw(bad_union_type(InType, Expr))),
     validateCaseOptions(Options, TypeOptions, InType, OutType).
 
+inferTypeSpecial(delete, _).
+
 assertOptionSignatures(Options, Type) :-
     callable(Options),
     Options = Op1 + Op2 ->
@@ -277,11 +284,14 @@ validateLValues([LValue | LValues], [Type | Types]) :-
     validateLValues(LValues, Types).
 
 validateLValue(LValue, Type) :-
-    LValue = (_::_) ->
+    lValue(LValue) ->
         true
         ;
         throw(not_lvalue(LValue, Type)).
 
+lValue(LValue) :-
+    LValue = (_::_).
+lValue(delete).
 
 fake_simpleWalkPredicate(2, a, b).
 
@@ -322,7 +332,7 @@ walkArgs([First | Rest], Pred, Start, End) :-
 
 fake_transition(_, default, a).
 fake_transition(Key, a, b(Key)).
-fake_transition(Key, b(_), c).
+fake_transition(_, b(_), c).
 
 :- begin_tests(stateMap).
 
@@ -358,6 +368,26 @@ stateMap(Pred, Key, [Key1=StateIn | RestIn], [Key1=StateOut | RestOut]) :-
         StateIn = StateOut,
         stateMap(Pred, Key, RestIn, RestOut)).
 
+:- begin_tests(transitionAll).
+
+test(empty_state) :-
+    transitionAll(fake_transition, [], L),
+    L == [].
+
+test(non_empty_state) :-
+    transitionAll(fake_transition, [x=a, y=b(y), z=p], L),
+    L == [x=b(x), y=c, z=p].
+
+:- end_tests(transitionAll).
+
+transitionAll(_, [], []).
+transitionAll(Transition, [Key=ValueIn | RestIn], [Key=ValueOut | RestOut]) :-
+    (call(Transition, Key, ValueIn, ValueOut) ->
+        true
+        ;
+        ValueIn = ValueOut),
+    transitionAll(Transition, RestIn, RestOut).
+
 readVars(_::_, default, new).
 readVars(Var::_, new, _) :-
     throw(var_already_introduced(Var)).
@@ -368,3 +398,13 @@ writeVars(_::Type, new, consumed) :-
     \+basicType(Type).
 writeVars(Var::Type, consumed, _) :-
     throw(var_used_more_than_once(Var, Type)).
+
+removeVars(Var::Type, new, _) :-
+    \+basicType(Type),
+    throw(var_not_used(Var, Type)).
+
+replaceSingletosWithDelete(Var, S, S) :-
+    var(Var) ->
+        Var = delete
+        ;
+        Var = _ :: _.

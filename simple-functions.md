@@ -1,6 +1,6 @@
 # Simple Functions
 
-Monomorphic functions are functions for which each parameter has a single, predetermined type, and as result, the function also evaluates to a single, predetermined type.
+Simple, or monomorphic functions are functions for which each parameter has a single, predetermined type, and as result, the function also evaluates to a single, predetermined type.
 
 For example, the following function has a single parameter of type `int64`, and returns the same type, such that the following code compiles successfully:
 
@@ -34,7 +34,17 @@ assert f("hello") == 5.
 Type mismatch. Expression hello expected to be int64, inferred: string.
 ```
 
-### Implicit and Explicit Type Signatures
+The header of a function must only contain l-values, which in the case of simple types is limited to variables.
+
+```prolog
+f(2) := 3.
+```
+
+```error
+Expected l-value of type int64. Found 2.
+```
+
+## Implicit and Explicit Type Signatures
 
 In the above example, the compiler managed to infer the function's signature, because we added an integer literal to `X`, inferring that its type (and the type of the result) is `int64`. However, in the following example the compiler cannot infer the type of `X`.
 
@@ -92,7 +102,7 @@ f(A) := B.
 Variable B has not been introduced in this context.
 ```
 
-What makes linear typing unique is the restriction on non-basic types (types other than numbers or Booleans) to be used only once. The following function is illegal, because the string `S` is being used twice in its body.
+What makes linear typing unique is the restriction on non-basic types (types other than numbers, Booleans or references) to be used only once. The following function is illegal, because the string `S` is being used twice in its body.
 
 ```prolog
 declare f(string) -> bool.
@@ -101,4 +111,24 @@ f(S) := S == S.
 
 ```error
 Variable S of non-basic type string is used more than once.
+```
+
+In linear typing, non-basic types can be used _exactly_ once in the body of a function. For example, the following function will not compile because variable `X` is not used:
+
+```prolog
+declare f(string) -> bool.
+f(X) := true.
+```
+
+```error
+Variable X of non-basic type string is not used in this context.
+```
+
+This means that when a parameter is not used by a function, it must not be bound to a variable in the first place. Neutrino uses the `_` singleton variable for that.
+
+The following code compiles successfully:
+
+```prolog
+declare f(string) -> bool.
+f(_) := true.
 ```
