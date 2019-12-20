@@ -9,12 +9,14 @@
 :- op(700, fx, case).
 :- op(600, xfx, of).
 :- op(300, xfy, !).
+:- op(200, fx, &).
 :- op(100, fx, !).
 :- op(100, xfx, ::).
 
 :- dynamic type_signature/4.
 :- dynamic type/1.
 :- dynamic union_type/2.
+:- dynamic is_constructor/2.
 :- discontiguous inferType/2.
 
 !Goal :- Goal, !.
@@ -247,7 +249,9 @@ assertOptionSignatures(Options, Type) :-
         assertOptionSignatures(Op2, Type)
         ;
         Options =.. [Name | Args],
-        assert(type_signature(Name, Args, Type, [])).
+        assert(type_signature(Name, Args, Type, [])),
+        length(Args, Arity),
+        assert(is_constructor(Name, Arity)).
 
 validateCaseOptions(Options, TypeOptions, Type, OutType) :-
     TypeOptions = TyOp1 + TyOp2 ->
@@ -408,3 +412,88 @@ replaceSingletosWithDelete(Var, S, S) :-
         Var = delete
         ;
         Var = _ :: _.
+
+:- begin_tests(assembly).
+
+test(assemble_number) :-
+    assembly(42, Val, [], Assembly),
+    Val == 42,
+    Assembly == [].
+
+test(string) :-
+    assembly("hello", Val, [], Assembly),
+    Val == "hello",
+    Assembly == [].
+
+test(var) :-
+    assembly('V'::some_type, Val, [], Assembly),
+    Val == 'V'::some_type,
+    Assembly == [].
+
+test(var_ref) :-
+    assembly(&'V'::some_type, Val, [], Assembly),
+    Val == &'V'::some_type,
+    Assembly == [].
+
+test(simple_func) :-
+    assembly(1+2, Val, [], Assembly),
+    Assembly == [call(+, [1, 2], Val)].
+
+test(nested_func) :-
+    assembly(1+2+3, Val, [], Assembly),
+    (Val, Assembly) =@= (Val, [call(+, [1, 2], X),
+                               call(+, [X, 3], Val)]).
+
+test(case) :-
+    compileStatement((union foobar1 = foo1(int64) + bar1(float64)), []),
+    assembly((case foo1(42) of {
+        foo1('A'::int64) => 'A'::int64 == 1;
+        bar1('B'::float64) => 'B'::float64 == 1.0
+    }), Val, [], Asm),
+    (Val, Asm) =@= (Val, [construct(foo1, [42], X),
+                          case(X, 
+                              [[destruct(X, foo1, ['A'::int64]),
+                              call(==, ['A'::int64, 1], Val)],
+                              [destruct(X, bar1, ['B'::float64]),
+                              call(==, ['B'::float64, 1.0], Val)]])]).
+
+:- end_tests(assembly).
+
+assemblySpecial(Expr, Expr, Asm, Asm) :-
+    isSimpleExpr(Expr).
+
+assemblySpecial((case Expr of {Branches}), Val, AsmIn, AsmOut) :-
+    branchesAssembly(ExprVal, Branches, Val, BranchesAsm),
+    assembly(Expr, ExprVal, [case(ExprVal, BranchesAsm) | AsmIn], AsmOut).
+
+assembly(Expr, Val, AsmIn, AsmOut) :-
+    assemblySpecial(Expr, Val, AsmIn, AsmOut) ->
+        true
+        ;
+        Expr =.. [Name | Args],
+        length(Args, Arity),
+        (is_constructor(Name, Arity) ->
+            assemblies(Args, Vals, [construct(Name, Vals, Val) | AsmIn], AsmOut)
+            ;
+            assemblies(Args, Vals, [call(Name, Vals, Val) | AsmIn], AsmOut)).
+
+assemblies([], [], Asm, Asm).
+assemblies([Expr | Exprs], [Val | Vals], AsmIn, AsmOut) :-
+    assembly(Expr, Val, AsmIn, AsmMid),
+    assemblies(Exprs, Vals, AsmMid, AsmOut).
+
+isSimpleExpr(Expr) :- number(Expr).
+isSimpleExpr(Expr) :- string(Expr).
+isSimpleExpr(_::_).
+isSimpleExpr(&_::_).
+
+branchesAssembly(Expr, Branches, Val, BranchesAsm) :-
+    Branches = (FirstBranch; RestBranches) ->
+        BranchesAsm = [FirstAsm | RestAsm],
+        branchesAssembly(Expr, FirstBranch, Val, [FirstAsm]),
+        branchesAssembly(Expr, RestBranches, Val, RestAsm)
+        ;
+        !(Branches = (Pattern => Result)),
+        Pattern =.. [Name | Args],
+        BranchesAsm = [[destruct(Expr, Name, Args) | ResultAsm]],
+        assembly(Result, Val, [], ResultAsm).
