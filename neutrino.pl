@@ -87,7 +87,6 @@ compileStatement((union Union = Options), VNs) :-
     validateOptions(Options).
 
 inferType(_::T, T).
-inferType(true, bool).
 inferType(N, int64) :- integer(N).
 inferType(N, float64) :- float(N).
 inferType(S, string) :- string(S).
@@ -138,8 +137,6 @@ writeln_list(S, []) :-
 
 type_signature(==, [T, T], bool, []).
 type_signature(+, [T, T], T, []).
-type_signature(true, [], bool, []).
-type_signature(false, [], bool, []).
 
 inferType(Term, Type) :-
     inferTypeSpecial(Term, Type) ->
@@ -240,7 +237,7 @@ inferTypeSpecial(case Expr of {Options}, OutType) :-
         throw(bad_union_type(InType, Expr))),
     validateCaseOptions(Options, TypeOptions, InType, OutType).
 
-inferTypeSpecial(delete, _).
+inferTypeSpecial('_', _).
 
 assertOptionSignatures(Options, Type) :-
     callable(Options),
@@ -295,7 +292,7 @@ validateLValue(LValue, Type) :-
 
 lValue(LValue) :-
     LValue = (_::_).
-lValue(delete).
+lValue('_').
 
 fake_simpleWalkPredicate(2, a, b).
 
@@ -409,7 +406,7 @@ removeVars(Var::Type, new, _) :-
 
 replaceSingletosWithDelete(Var, S, S) :-
     var(Var) ->
-        Var = delete
+        Var = '_'
         ;
         Var = _ :: _.
 
@@ -448,14 +445,15 @@ test(case) :-
     compileStatement((union foobar1 = foo1(int64) + bar1(float64)), []),
     assembly((case foo1(42) of {
         foo1('A'::int64) => 'A'::int64 == 1;
-        bar1('B'::float64) => 'B'::float64 == 1.0
+        bar1('_') => false
     }), Val, [], Asm),
     (Val, Asm) =@= (Val, [construct(foo1, [42], X),
                           case(X, 
                               [[destruct(X, foo1, ['A'::int64]),
                               call(==, ['A'::int64, 1], Val)],
-                              [destruct(X, bar1, ['B'::float64]),
-                              call(==, ['B'::float64, 1.0], Val)]])]).
+                              [destruct(X, bar1, [Y]),
+                              delete(Y),
+                              construct(false, [], Val)]])]).
 
 :- end_tests(assembly).
 
@@ -489,11 +487,22 @@ isSimpleExpr(&_::_).
 
 branchesAssembly(Expr, Branches, Val, BranchesAsm) :-
     Branches = (FirstBranch; RestBranches) ->
-        BranchesAsm = [FirstAsm | RestAsm],
-        branchesAssembly(Expr, FirstBranch, Val, [FirstAsm]),
-        branchesAssembly(Expr, RestBranches, Val, RestAsm)
+        branchesAssembly(Expr, FirstBranch, Val, FirstAsm),
+        branchesAssembly(Expr, RestBranches, Val, RestAsm),
+        append(FirstAsm, RestAsm, BranchesAsm)
         ;
         !(Branches = (Pattern => Result)),
         Pattern =.. [Name | Args],
-        BranchesAsm = [[destruct(Expr, Name, Args) | ResultAsm]],
-        assembly(Result, Val, [], ResultAsm).
+        destructAssemblies(Args, DestArgs, [], DestAsm),
+        assembly(Result, Val, [], ResultAsm),
+        append([destruct(Expr, Name, DestArgs) | DestAsm], ResultAsm, BranchAsm),
+        BranchesAsm = [BranchAsm].
+
+destructAssemblies([], [], Asm, Asm).
+destructAssemblies([Var::Type | Args], [Var::Type | DestArgs], AsmIn, AsmOut) :-
+    destructAssemblies(Args, DestArgs, AsmIn, AsmOut).
+destructAssemblies(['_' | Args], [X | DestArgs], AsmIn, AsmOut) :-
+    destructAssemblies(Args, DestArgs, [delete(X) | AsmIn], AsmOut).
+
+% Prelude
+:- compileStatement((union bool = true + false), []).
