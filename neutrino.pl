@@ -432,12 +432,14 @@ test(var_ref) :-
     Val == &'V'::some_type,
     Assembly == [].
 
+% Functions use the call command.
 test(simple_func) :-
     assembly(1+2, Val, [], Assembly),
     (Val, Assembly) =@= (Val, [constant(2, Two),
-                               constant(1, One)
+                               constant(1, One),
                                call(+, [One, Two], Val)]).
 
+% Nested functions are assembled bottom-up.
 test(nested_func) :-
     assembly(1+2+3, Val, [], Assembly),
     (Val, Assembly) =@= (Val, [constant(3, Three),
@@ -446,6 +448,9 @@ test(nested_func) :-
                                call(+, [One, Two], X),
                                call(+, [X, Three], Val)]).
 
+% Case expressions are assembled by first assembling the expression being matched,
+% then for each branch assembling a sequence that first destructs the pattern and
+% then builds the expression it maps to.
 test(case) :-
     compileStatement((union foobar1 = foo1(int64) + bar1(float64)), []),
     assembly((case foo1(42) of {
