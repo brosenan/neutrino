@@ -412,16 +412,16 @@ replaceSingletosWithDelete(Var, S, S) :-
 
 :- begin_tests(assembly).
 
+% Numbers and strings are assembled using the constant command.
 test(assemble_number) :-
     assembly(42, Val, [], Assembly),
-    Val == 42,
-    Assembly == [].
+    Assembly == [constant(42, Val)].
 
 test(string) :-
     assembly("hello", Val, [], Assembly),
-    Val == "hello",
-    Assembly == [].
+    Assembly == [constant("hello", Val)].
 
+% Variables and variable references are returned as their own value.
 test(var) :-
     assembly('V'::some_type, Val, [], Assembly),
     Val == 'V'::some_type,
@@ -434,12 +434,17 @@ test(var_ref) :-
 
 test(simple_func) :-
     assembly(1+2, Val, [], Assembly),
-    Assembly == [call(+, [1, 2], Val)].
+    (Val, Assembly) =@= (Val, [constant(2, Two),
+                               constant(1, One)
+                               call(+, [One, Two], Val)]).
 
 test(nested_func) :-
     assembly(1+2+3, Val, [], Assembly),
-    (Val, Assembly) =@= (Val, [call(+, [1, 2], X),
-                               call(+, [X, 3], Val)]).
+    (Val, Assembly) =@= (Val, [constant(3, Three),
+                               constant(2, Two), 
+                               constant(1, One),
+                               call(+, [One, Two], X),
+                               call(+, [X, Three], Val)]).
 
 test(case) :-
     compileStatement((union foobar1 = foo1(int64) + bar1(float64)), []),
@@ -447,18 +452,23 @@ test(case) :-
         foo1('A'::int64) => 'A'::int64 == 1;
         bar1('_') => false
     }), Val, [], Asm),
-    (Val, Asm) =@= (Val, [construct(foo1, [42], X),
+    (Val, Asm) =@= (Val, [constant(42, FourtyTwo),
+                          construct(foo1, [FourtyTwo], X),
                           case(X, 
                               [[destruct(X, foo1, ['A'::int64]),
-                              call(==, ['A'::int64, 1], Val)],
+                              constant(1, One),
+                              call(==, ['A'::int64, One], Val)],
                               [destruct(X, bar1, [Y]),
                               delete(Y),
                               construct(false, [], Val)]])]).
 
 :- end_tests(assembly).
 
-assemblySpecial(Expr, Expr, Asm, Asm) :-
+assemblySpecial(Expr, Val, Asm, [constant(Expr, Val) | Asm]) :-
     isSimpleExpr(Expr).
+
+assemblySpecial(Name::Type, Name::Type, Asm, Asm).
+assemblySpecial(&Name::Type, &Name::Type, Asm, Asm).
 
 assemblySpecial((case Expr of {Branches}), Val, AsmIn, AsmOut) :-
     branchesAssembly(ExprVal, Branches, Val, BranchesAsm),
@@ -482,8 +492,6 @@ assemblies([Expr | Exprs], [Val | Vals], AsmIn, AsmOut) :-
 
 isSimpleExpr(Expr) :- number(Expr).
 isSimpleExpr(Expr) :- string(Expr).
-isSimpleExpr(_::_).
-isSimpleExpr(&_::_).
 
 branchesAssembly(Expr, Branches, Val, BranchesAsm) :-
     Branches = (FirstBranch; RestBranches) ->
