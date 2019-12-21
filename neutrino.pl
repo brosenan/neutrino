@@ -67,9 +67,12 @@ compileStatement((Func := Body), VNs) :-
         ;
         validateArgTypes(Args),
         assert(type_signature(Name, ArgTypes, Type, []))),
-    walk(Func, stateMap(introduceVars), [], VarStateBeforeBody),
-    walk(Body, stateMap(consumeVars), VarStateBeforeBody, VarStateAfterBody),
-    transitionAll(removeVars, VarStateAfterBody, _).
+    !destructAssemblies(Args, DestArgs, [], DestAsm),
+    !assembly(Body, Result, DestAsm, Asm),
+    !stateMapList(introduceVars, DestArgs, [], VarState1),
+    !lineariryCheck(Asm, VarState1, VarState2),
+    !stateMap(consumeVars, Result, VarState2, VarState3),
+    transitionAll(removeVars, VarState3, _).
 
 compileStatement((declare Func -> Type), _VNs) :-
     Func =.. [Name | ArgTypes],
@@ -239,6 +242,8 @@ inferTypeSpecial(case Expr of {Options}, OutType) :-
 
 inferTypeSpecial('_', _).
 
+inferTypeSpecial(_::Type, Type).
+
 assertOptionSignatures(Options, Type) :-
     callable(Options),
     Options = Op1 + Op2 ->
@@ -353,21 +358,39 @@ test(no_transition) :-
     stateMap(fake_transition, x, [x=p, y=a], L),
     L == [x=p, y=a].
 
+% Free variables are ignored.
+test(free_vars) :-
+    stateMap(fake_transition, _, [x=a], L),
+    L == [x=a].
+
 :- end_tests(stateMap).
 
-stateMap(Pred, Key, [], [Key=Default]) :-
-    call(Pred, Key, default, Default).
+stateMap(Pred, Key, [], StateOut) :-
+    var(Key) ->
+        StateOut = []
+        ;
+        call(Pred, Key, default, Default),
+        StateOut = [Key=Default].
 
 stateMap(Pred, Key, [Key1=StateIn | RestIn], [Key1=StateOut | RestOut]) :-
-    (Key = Key1 ->
-        (call(Pred, Key, StateIn, StateOut) ->
-            true
-            ;
-            StateIn = StateOut),
-        RestIn = RestOut
+    var(Key) ->
+        StateOut = StateIn,
+        RestOut = RestIn
         ;
-        StateIn = StateOut,
-        stateMap(Pred, Key, RestIn, RestOut)).
+        (Key = Key1 ->
+            (call(Pred, Key, StateIn, StateOut) ->
+                true
+                ;
+                StateIn = StateOut),
+            RestIn = RestOut
+            ;
+            StateIn = StateOut,
+            stateMap(Pred, Key, RestIn, RestOut)).
+
+stateMapList(_, [], State, State).
+stateMapList(Pred, [Key | Keys], StateIn, StateOut) :-
+    stateMap(Pred, Key, StateIn, StateMid),
+    stateMapList(Pred, Keys, StateMid, StateOut).
 
 :- begin_tests(transitionAll).
 
@@ -506,16 +529,39 @@ branchesAssembly(Expr, Branches, Val, BranchesAsm) :-
         ;
         !(Branches = (Pattern => Result)),
         Pattern =.. [Name | Args],
-        destructAssemblies(Args, DestArgs, [], DestAsm),
         assembly(Result, Val, [], ResultAsm),
-        append([destruct(Expr, Name, DestArgs) | DestAsm], ResultAsm, BranchAsm),
-        BranchesAsm = [BranchAsm].
+        destructAssemblies(Args, DestArgs, ResultAsm, DestAsm),
+        BranchesAsm = [[destruct(Expr, Name, DestArgs) | DestAsm]].
 
 destructAssemblies([], [], Asm, Asm).
 destructAssemblies([Var::Type | Args], [Var::Type | DestArgs], AsmIn, AsmOut) :-
     destructAssemblies(Args, DestArgs, AsmIn, AsmOut).
 destructAssemblies(['_' | Args], [X | DestArgs], AsmIn, AsmOut) :-
     destructAssemblies(Args, DestArgs, [delete(X) | AsmIn], AsmOut).
+
+lineariryCheck([], State, State).
+lineariryCheck([destruct(In, _, Outs) | Asm], StateIn, StateOut) :-
+    stateMap(consumeVars, In, StateIn, State1),
+    stateMapList(introduceVars, Outs, State1, State2),
+    !lineariryCheck(Asm, State2, StateOut).
+
+lineariryCheck([construct(_, Ins, Out) | Asm], StateIn, StateOut) :-
+    stateMapList(consumeVars, Ins, StateIn, State1),
+    stateMap(introduceVars, Out, State1, State2),
+    !lineariryCheck(Asm, State2, StateOut).
+
+lineariryCheck([call(_, Ins, Out) | Asm], StateIn, StateOut) :-
+    stateMapList(consumeVars, Ins, StateIn, State1),
+    stateMap(introduceVars, Out, State1, State2),
+    !lineariryCheck(Asm, State2, StateOut).
+
+lineariryCheck([constant(_, Out) | Asm], StateIn, StateOut) :-
+    stateMap(introduceVars, Out, StateIn, State1),
+    !lineariryCheck(Asm, State1, StateOut).
+
+lineariryCheck([delete(X) | Asm], StateIn, StateOut) :-
+    stateMap(consumeVars, X, StateIn, State1),
+    !lineariryCheck(Asm, State1, StateOut).
 
 % Prelude
 :- compileStatement((union bool = true + false), []).
