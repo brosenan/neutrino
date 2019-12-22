@@ -253,6 +253,7 @@ type(_::type(_)).
 
 basicType(int64).
 basicType(float64).
+basicType(&_).
 
 validateVars([]).
 validateVars([Var | Vars]) :-
@@ -684,11 +685,14 @@ tupleToList(Tuple, List) :-
 
 saturateTypes([]).
 saturateTypes([T:C | Rest]) :-
-    gensym(unknown_type, Sym),
-    (T =.. [Sym, C] ->
-        assert(class_instance(T, C))
+    (var(T) ->
+        gensym(unknown_type, T)
         ;
         true),
+    (type(T) ->
+        true
+        ;
+        assert(class_instance(T, C))),
     saturateTypes(Rest).
 
 checkAssumptions([]).

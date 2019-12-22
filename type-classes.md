@@ -186,7 +186,7 @@ greet_type(Greeting, Obj) := Greeting + ", " + Obj.
 ```
 
 ```error
-Expression Obj::string expected to be unknown_type1(named_type), inferred: string.
+Expression Obj::string expected to be unknown_type1, inferred: string.
 ```
 
 When calling a polymorphic function, the compiler checks the assumptions hold for the given types. For example, if we call `greet_type` on a `float64` without first defining `float64` as an instance of `named_type`, we get a compilation error.
@@ -206,4 +206,21 @@ assert greet_type("hola", 3.0) == "hola, float64".
 
 ```error
 Type float64 is not an instance of class named_type.
+```
+
+A polymorphic function is not restricted to assigning a type to only one type class. The following compiles successfully:
+
+```prolog
+class F:foo where {
+    foo(F) -> F
+}.
+
+class B:bar where {
+    bar(B) -> B
+}.
+
+T:foo, T:bar =>
+declare foobar(T) -> T.
+
+foobar(X) := foo(bar(X)).
 ```
