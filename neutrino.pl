@@ -17,6 +17,7 @@
 :- dynamic type/1.
 :- dynamic union_type/2.
 :- dynamic is_constructor/2.
+:- dynamic type_class/3.
 :- discontiguous inferType/2.
 
 !Goal :- Goal, !.
@@ -33,7 +34,7 @@ compileAll(SourceFile, S, Term, VNs) :-
         ;
         catch(
             (
-                compileStatement(Term, VNs)
+                !compileStatement(Term, VNs)
             ),
             Exception,
             (
@@ -57,22 +58,7 @@ compileStatement((assert Expr), VNs) :-
 
 compileStatement((Func := Body), VNs) :-
     nameVars(VNs),
-    walk(Func, replaceSingletosWithDelete, [], _),
-    Func =.. [Name | Args],
-    inferType(Body, Type),
-    inferTypes(Args, ArgTypes),
-    validateLValues(Args, ArgTypes),
-    sameLength(ArgTypes, SigArgTypes),
-    (type_signature(Name, SigArgTypes, SigType, []) ->
-        matchTypes(ArgTypes, SigArgTypes, Args),
-        matchType(Type, SigType, Body)
-        ;
-        validateArgTypes(Args),
-        assert(type_signature(Name, ArgTypes, Type, []))),
-    !destructAssemblies(Args, DestArgs, [], DestAsm),
-    !assembly(Body, Result, DestAsm, Asm),
-    !stateMapList(introduceVars, DestArgs, [], VarState1),
-    !lineariryCheck(Asm, Result, VarState1, _).
+    compileFunctionDefinition((Func := Body), []).
 
 compileStatement((declare Func -> Type), _VNs) :-
     Func =.. [Name | ArgTypes],
@@ -88,6 +74,40 @@ compileStatement((union Union = Options), VNs) :-
     verifyTypeVariables(Args),
     walk(Options, verifyVarIsType(Name), [], _),
     validateOptions(Options).
+
+compileStatement((class T:C where {Decls}), VNs) :-
+    declareClassFunctions(Decls, [T:C]),
+    assert(type_class(C, T, Decls)),
+    (var(T) ->
+        true
+        ;
+        throw(instance_type_not_var_in_class_decl(T, C))),
+    validateClassDecls(Decls, C, T).
+
+compileStatement((instance T:C where {Defs}), VNs) :-
+    !type_class(C, T, Decls),
+    !nameVars(VNs),
+    !validateInstance(Decls, Defs, T, C),
+    compileMethods(Defs, [T:C]).
+
+compileFunctionDefinition((Func := Body), TypeContext) :-
+    walk(Func, replaceSingletosWithDelete, [], _),
+    Func =.. [Name | Args],
+    inferType(Body, Type),
+    inferTypes(Args, ArgTypes),
+    validateLValues(Args, ArgTypes),
+    sameLength(ArgTypes, SigArgTypes),
+    (type_signature(Name, SigArgTypes, SigType, TypeContext) ->
+        matchTypes(ArgTypes, SigArgTypes, Args),
+        matchType(Type, SigType, Body)
+        ;
+        validateArgTypes(Args),
+        assert(type_signature(Name, ArgTypes, Type, []))),
+    !destructAssemblies(Args, DestArgs, [], DestAsm),
+    !assembly(Body, Result, DestAsm, Asm),
+    !stateMapList(introduceVars, DestArgs, [], VarState1),
+    !lineariryCheck(Asm, Result, VarState1, _).
+
 
 inferType(_::T, T).
 inferType(N, int64) :- integer(N).
@@ -130,6 +150,21 @@ formatError(var_used_more_than_once(Var, Type),
     ["Variable ", Var, " of non-basic type ", Type, " is used more than once."]).
 formatError(var_not_used(Var, Type),
     ["Variable ", Var, " of non-basic type ", Type, " is not used in this context."]).
+formatError(too_few_methods(T, C),
+    ["Instance ", T, " of class ", C,
+     " defines less methods than required by the class."]).
+formatError(method_mismatch(DeclMethod, DefMethod, T, C),
+    ["Expected ", DeclMethod, " in instance ", T, " of class ", C,
+     ". Found ", DefMethod, "."]).
+formatError(too_many_methods(T, C),
+    ["Instance ", T, " of class ", C,
+     " defines more methods than required by the class."]).
+formatError(instance_type_not_var_in_class_decl(T, C), 
+    ["Expected instance type to be a free variable in the declaration of class ", C,
+    ". Found: ", T, "."]).
+formatError(method_does_not_depend_on_instance_type(Name, C),
+    ["Method ", Name,
+     " does not depend on the instance type in the declaration of class ", C, "."]).
 
 writeln_list(S, [First | Rest]) :-
     write(S, First),
@@ -574,6 +609,53 @@ lineariryCheck([case(Expr, [Branch | Branches]) | Asm], Result, StateIn, StateOu
     lineariryCheck([case(Expr, Branches) | Asm], Result, StateIn, _).
 
 lineariryCheck([case(_, []) | _], _, State, State).
+
+declareClassFunctions((Func -> Type), TypeContext) :-
+    Func =.. [Name | Args],
+    assert(type_signature(Name, Args, Type, TypeContext)).
+
+declareClassFunctions((Decl; Decls), TypeContext) :-
+    declareClassFunctions(Decl, TypeContext),
+    declareClassFunctions(Decls, TypeContext).
+
+validateInstance((FirstDecl; RestDecl), Defs, T, C) :-
+    Defs = (FirstDef; RestDef) ->
+        !validateInstance(FirstDecl, FirstDef, T, C),
+        !validateInstance(RestDecl, RestDef, T, C)
+        ;
+        throw(too_few_methods(T, C)).
+
+validateInstance((Func -> Type), Defs, T, C) :-
+    Defs = (Head := Body) ->
+        Func =.. [DeclName | DeclArgs],
+        Head =.. [DefName | DefArgs],
+        length(DeclArgs, DeclArity),
+        length(DefArgs, DefArity),
+        (DeclName/DeclArity == DefName/DeclArity ->
+            true
+            ;
+            throw(method_mismatch(DeclName/DeclArity, DefName/DefArity, T, C)))
+        ;
+        throw(too_many_methods(T, C)).
+
+validateClassDecls((Decl1; Decl2), C, T) :-
+    validateClassDecls(Decl1, C, T),
+    validateClassDecls(Decl2, C, T).
+
+validateClassDecls((Func -> _), C, T) :-
+    term_variables(Func, Vars),
+    \+((member(Var, Vars), Var == T)) ->
+        functor(Func, Name, _),
+        throw(method_does_not_depend_on_instance_type(Name, C))
+        ;
+        true.
+
+compileMethods((Method1; Method2), TypeContext) :-
+    compileMethods(Method1, TypeContext),
+    compileMethods(Method2, TypeContext).
+
+compileMethods((Func := Expr), TypeContext) :-
+    compileFunctionDefinition((Func := Expr), TypeContext).
 
 % Prelude
 :- compileStatement((union bool = true + false), []).
