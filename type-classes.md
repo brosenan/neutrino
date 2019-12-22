@@ -4,35 +4,35 @@
 
 A type-class represents a contract, defined as a set of functions named _methods_. A type can be defined as an _instance_ of a type-class by defining these methods for this type.
 
-In the following example, we define a type-class named `named_type`. Its contract consists of a single method, `name_type`, which takes an object of the instance type and returns a `string`, representing the name of the type.
+In the following example, we define a type-class named `named_type`. Its contract consists of a single method, `type_name`, which takes an object of the instance type and returns a `string`, representing the name of the type.
 
 The following compiles successfully:
 
 ```prolog
 class T : named_type where {
-    name_type(T) -> string
+    type_name(T) -> string
 }.
 ```
 
-With such a definition in place, concrete types can be assigned as instances of the type class. For example, the type `int64` can be made an instance of `named_type` by implementing `name_type` to simply return the string `"int64"`. For `float64`, the method will return the string `"float64"`, etc.
+With such a definition in place, concrete types can be assigned as instances of the type class. For example, the type `int64` can be made an instance of `named_type` by implementing `type_name` to simply return the string `"int64"`. For `float64`, the method will return the string `"float64"`, etc.
 
 The following compiles successfully:
 
 ```prolog
 class T : named_type where {
-    name_type(T) -> string
+    type_name(T) -> string
 }.
 
 instance int64 : named_type where {
-    name_type(_) := "int64"
+    type_name(_) := "int64"
 }.
 
 instance float64 : named_type where {
-    name_type(_) := "float64"
+    type_name(_) := "float64"
 }.
 
-assert name_type(3) == "int64".
-assert name_type(3.0) == "float64".
+assert type_name(3) == "int64".
+assert type_name(3.0) == "float64".
 ```
 
 ## Class Declarations
@@ -47,7 +47,7 @@ The instance type must be represented by a free variable, as it abstracts over a
 
 ```prolog
 class int64 : named_type where {
-    name_type(int64) -> string
+    type_name(int64) -> string
 }.
 ```
 
@@ -142,4 +142,68 @@ instance float64 : foo where {
 
 ```error
 Type mismatch. Expression B::float64 expected to be int64, inferred: float64.
+```
+
+## Polymorphic Functions
+
+Type classes allow us to define polymorphic functions. These functions, given a single definition, actually define a "family" of simple functions, which differ only in their argument types.
+
+Consider the `named_type` example given above. Using this type-class we can define a polymorphic function `greet_type` which takes a `string` greeting and an object of any `named_type` and returns a string greeting the type. The following compiles successfully:
+
+```prolog
+class T : named_type where {
+    type_name(T) -> string
+}.
+
+T : named_type =>
+declare greet_type(string, T) -> string.
+
+greet_type(Greeting, Obj) := Greeting + ", " + type_name(Obj).
+
+instance int64 : named_type where {
+    type_name(_) := "int64"
+}.
+
+instance float64 : named_type where {
+    type_name(_) := "float64"
+}.
+
+assert greet_type("hello", 3) == "hello, int64".
+assert greet_type("hola", 3.0) == "hola, float64".
+```
+
+A polymorphic function cannot assume anything about the types it receives as parameters, except that they conform to the classes they are declared to conform to. For example, we cannot assume `Obj` is of type `string`.
+
+```prolog
+class T : named_type where {
+    type_name(T) -> string
+}.
+
+T : named_type =>
+declare greet_type(string, T) -> string.
+
+greet_type(Greeting, Obj) := Greeting + ", " + Obj.
+```
+
+```error
+Expression Obj::string expected to be unknown_type1(named_type), inferred: string.
+```
+
+When calling a polymorphic function, the compiler checks the assumptions hold for the given types. For example, if we call `greet_type` on a `float64` without first defining `float64` as an instance of `named_type`, we get a compilation error.
+
+```prolog
+class T : named_type where {
+    type_name(T) -> string
+}.
+
+T : named_type =>
+declare greet_type(string, T) -> string.
+
+greet_type(Greeting, Obj) := Greeting + ", " + type_name(Obj).
+
+assert greet_type("hola", 3.0) == "hola, float64".
+```
+
+```error
+Type float64 is not an instance of class named_type, which is an assumption made by greet_type.
 ```

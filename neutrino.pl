@@ -1,10 +1,10 @@
-:- op(1100, fx, declare).
+:- op(1090, xfx, =>).
+:- op(1070, fx, declare).
 :- op(1050, fx, assert).
 :- op(1050, fx, union).
 :- op(1050, fx, struct).
 :- op(1050, fx, class).
 :- op(1050, fx, instance).
-:- op(1090, xfx, =>).
 :- op(900, xfx, where).
 :- op(700, fx, case).
 :- op(600, xfx, of).
@@ -18,6 +18,7 @@
 :- dynamic union_type/2.
 :- dynamic is_constructor/2.
 :- dynamic type_class/3.
+:- dynamic class_instance/2.
 :- discontiguous inferType/2.
 
 !Goal :- Goal, !.
@@ -58,11 +59,10 @@ compileStatement((assert Expr), VNs) :-
 
 compileStatement((Func := Body), VNs) :-
     nameVars(VNs),
-    compileFunctionDefinition((Func := Body), []).
+    compileFunctionDefinition((Func := Body), _).
 
-compileStatement((declare Func -> Type), _VNs) :-
-    Func =.. [Name | ArgTypes],
-    assert(type_signature(Name, ArgTypes, Type, [])).
+compileStatement((declare Decl), VNs) :-
+    compileStatement((declare Decl), VNs, []).
 
 compileStatement((union Union = Options), VNs) :-
     Union =.. [Name | Args],
@@ -75,7 +75,7 @@ compileStatement((union Union = Options), VNs) :-
     walk(Options, verifyVarIsType(Name), [], _),
     validateOptions(Options).
 
-compileStatement((class T:C where {Decls}), VNs) :-
+compileStatement((class T:C where {Decls}), _VNs) :-
     declareClassFunctions(Decls, [T:C]),
     assert(type_class(C, T, Decls)),
     (var(T) ->
@@ -86,9 +86,18 @@ compileStatement((class T:C where {Decls}), VNs) :-
 
 compileStatement((instance T:C where {Defs}), VNs) :-
     !type_class(C, T, Decls),
+    assert(class_instance(T, C)),
     !nameVars(VNs),
     !validateInstance(Decls, Defs, T, C),
     compileMethods(Defs, [T:C]).
+
+compileStatement((Context => Statement), VNs) :-
+    tupleToList(Context, ContextAsList),
+    compileStatement(Statement, VNs, ContextAsList).
+
+compileStatement((declare Func -> Type), _VNs, Context) :-
+    Func =.. [Name | ArgTypes],
+    assert(type_signature(Name, ArgTypes, Type, Context)).
 
 compileFunctionDefinition((Func := Body), TypeContext) :-
     walk(Func, replaceSingletosWithDelete, [], _),
@@ -98,6 +107,7 @@ compileFunctionDefinition((Func := Body), TypeContext) :-
     validateLValues(Args, ArgTypes),
     sameLength(ArgTypes, SigArgTypes),
     (type_signature(Name, SigArgTypes, SigType, TypeContext) ->
+        !saturateTypes(TypeContext),
         matchTypes(ArgTypes, SigArgTypes, Args),
         matchType(Type, SigType, Body)
         ;
@@ -165,6 +175,9 @@ formatError(instance_type_not_var_in_class_decl(T, C),
 formatError(method_does_not_depend_on_instance_type(Name, C),
     ["Method ", Name,
      " does not depend on the instance type in the declaration of class ", C, "."]).
+formatError(type_not_instance(T, C, Name),
+    ["Type ", T, " is not an instance of class ", C,
+     ", which is an assumption made by ", Name, "."]).
 
 writeln_list(S, [First | Rest]) :-
     write(S, First),
@@ -182,9 +195,10 @@ inferType(Term, Type) :-
         ;
         callable(Term),
         Term =.. [Name | Args],
-        !type_signature(Name, ArgTypes, Type, _),
+        !type_signature(Name, ArgTypes, Type, Context),
         inferTypes(Args, Types),
-        matchTypes(Types, ArgTypes, Args).
+        matchTypes(Types, ArgTypes, Args),
+        checkContext(Context, Name).
 
 inferTypes([], []).
 inferTypes([Arg | Args], [Type | Types]) :-
@@ -625,8 +639,8 @@ validateInstance((FirstDecl; RestDecl), Defs, T, C) :-
         ;
         throw(too_few_methods(T, C)).
 
-validateInstance((Func -> Type), Defs, T, C) :-
-    Defs = (Head := Body) ->
+validateInstance((Func -> _Type), Defs, T, C) :-
+    Defs = (Head := _Body) ->
         Func =.. [DeclName | DeclArgs],
         Head =.. [DefName | DefArgs],
         length(DeclArgs, DeclArity),
@@ -656,6 +670,29 @@ compileMethods((Method1; Method2), TypeContext) :-
 
 compileMethods((Func := Expr), TypeContext) :-
     compileFunctionDefinition((Func := Expr), TypeContext).
+
+tupleToList(Tuple, List) :-
+    Tuple = (A,B) ->
+        List = [A | BList],
+        tupleToList(B, BList)
+        ;
+        List = [Tuple].
+
+saturateTypes([]).
+saturateTypes([T:C | Rest]) :-
+    gensym(unknown_type, Sym),
+    (T =.. [Sym, C] ->
+        true
+        ;
+        true),
+    saturateTypes(Rest).
+
+checkContext([], _).
+checkContext([T:C | Rest], Name) :-
+    class_instance(T, C) ->
+        checkContext(Rest, Name)
+        ;
+        throw(type_not_instance(T, C, Name)).
 
 % Prelude
 :- compileStatement((union bool = true + false), []).
