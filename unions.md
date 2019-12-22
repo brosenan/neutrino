@@ -72,7 +72,7 @@ assert case 2 of {
 ```
 
 ```error
-Expected union type expression. Found 2 of non-union type int64.
+Expected union type expression. Found 1 of non-union type int64.
 ```
 
 The mapping enclosed in the braces should reference all the options defined for the type.
@@ -129,7 +129,7 @@ assert case num(3) of {
 ```
 
 ```error
-Expected num to have an arity of 1. Found arity of 2.
+Undefined expression num/2.
 ```
 
 The pattern arguments themselves must be _l-value_, which in the case of simple types such as `int64` and `string` (as in the case of union types), consists only of variables.

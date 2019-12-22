@@ -69,7 +69,8 @@ compileStatement((union Union = Options), VNs) :-
     validateVars(Args),
     assert(type(Union)),
     assertOptionSignatures(Options, Union),
-    assert(union_type(Union, Options)),
+    sumToList(Options, OptionList),
+    assert(union_type(Union, OptionList)),
     nameVars(VNs),
     verifyTypeVariables(Args),
     walk(Options, verifyVarIsType(Name), [], _),
@@ -133,12 +134,17 @@ inferType(Term, Type, Assumptions) :-
     inferTypeSpecial(Term, Type, Assumptions) ->
         true
         ;
-        callable(Term),
+        !my_callable(Term),
         Term =.. [Name | Args],
-        !type_signature(Name, ArgTypes, Type, Context),
-        inferTypes(Args, Types, ArgAssumptions),
-        append(Context, ArgAssumptions, Assumptions),
-        matchTypes(Types, ArgTypes, Args).
+        sameLength(Args, ArgTypes),
+        (type_signature(Name, ArgTypes, Type, Context) ->
+            true
+            ;
+            functor(Term, Name, Arity),
+            throw(undefined_expression(Name/Arity))),
+        !inferTypes(Args, Types, ArgAssumptions),
+        !append(Context, ArgAssumptions, Assumptions),
+        !matchTypes(Types, ArgTypes, Args).
 
 matchType(T1, T2, Expr) :-
     unify_with_occurs_check(T1, T2) ->
@@ -195,6 +201,9 @@ formatError(type_not_instance(T, C),
     ["Type ", T, " is not an instance of class ", C, "."]).
 formatError(type_class_does_not_exist(C),
     ["Type class ", C, " does not exist."]).
+formatError(undefined_expression(Functor),
+    ["Undefined expression ", Functor, "."]).
+
 
 writeln_list(S, [First | Rest]) :-
     write(S, First),
@@ -205,6 +214,7 @@ writeln_list(S, []) :-
 
 type_signature(==, [T, T], bool, []).
 type_signature(+, [T, T], T, []).
+type_signature(-, [T, T], T, []).
 
 inferTypes([], [], []).
 inferTypes([Arg | Args], [Type | Types], Assumptions) :-
@@ -289,13 +299,15 @@ verifyTypeVariable(Name::Kind) :-
         ;
         throw(double_use_of_var(Name)).
 
-inferTypeSpecial(case Expr of {Options}, OutType, Assumptions) :-
+inferTypeSpecial(case Expr of {Branches}, OutType, Assumptions) :-
     !inferType(Expr, InType, ExprAssumptions),
-    (union_type(InType, TypeOptions) ->
+    !validateCaseOptions(Branches, InType, OutType, CaseAssumptions, 0, OptionCount),
+    !union_type(InType, Options),
+    (length(Options, OptionCount) ->
         true
         ;
-        throw(bad_union_type(InType, Expr))),
-    validateCaseOptions(Options, TypeOptions, InType, OutType, CaseAssumptions),
+        !nth0(OptionCount, Options, Missing),
+        throw(incomplete_case_expr(Missing, InType))),
     append(ExprAssumptions, CaseAssumptions, Assumptions).
 
 inferTypeSpecial('_', _, []).
@@ -303,7 +315,7 @@ inferTypeSpecial('_', _, []).
 inferTypeSpecial(_::Type, Type, []).
 
 assertOptionSignatures(Options, Type) :-
-    callable(Options),
+    my_callable(Options),
     Options = Op1 + Op2 ->
         assertOptionSignatures(Op1, Type),
         assertOptionSignatures(Op2, Type)
@@ -313,20 +325,26 @@ assertOptionSignatures(Options, Type) :-
         length(Args, Arity),
         assert(is_constructor(Name, Arity)).
 
-validateCaseOptions(Options, TypeOptions, Type, OutType, Assumptions) :-
-    TypeOptions = TyOp1 + TyOp2 ->
-        (Options = (Pattern1 => Value1; Op2) ->
-            validateCaseOption(Pattern1, Value1, TyOp1, OutType, Assumptions1),
-            validateCaseOptions(Op2, TyOp2, Type, OutType, Assumptions2),
-            append(Assumptions1, Assumptions2, Assumptions)
-            ;
-            throw(incomplete_case_expr(TyOp2, Type)))
-        ;
-        !(Options = (Pattern => Value)),
-        walk(Pattern, replaceSingletosWithDelete, [], _),
-        validateCaseOption(Pattern, Value, TypeOptions, OutType, Assumptions).
+validateCaseOptions((Branch; Branches),
+        Type, OutType, Assumptions, FirstIndex, LastIndex) :-
+    !validateCaseOption(Branch, Type, OutType, Assumptions1, FirstIndex),
+    NextIndex is FirstIndex + 1,
+    !validateCaseOptions(Branches, Type, OutType, Assumptions2, NextIndex, LastIndex),
+    append(Assumptions1, Assumptions2, Assumptions).
 
-validateCaseOption(Pattern, Value, Option, OutType, Assumptions) :-
+validateCaseOptions((Pattern => Expr), Type, OutType, Assumptions, Index, LastIndex) :-
+    !validateCaseOption((Pattern => Expr), Type, OutType, Assumptions, Index),
+    LastIndex is Index + 1.
+
+validateCaseOption((Pattern => Value), InType, OutType, Assumptions, Index) :-
+    walk(Pattern, replaceSingletosWithDelete, [], _),
+    !inferType(Pattern, InferredType, _),
+    !matchType(InferredType, InType, Pattern),
+    (union_type(InType, Options) ->
+        true
+        ;
+        throw(bad_union_type(InType, Pattern))),
+    !nth0(Index, Options, Option),
     Pattern =.. [PatternName | PatternArgs],
     Option =.. [OptionName | OptionArgs],
     (OptionName == PatternName ->
@@ -627,9 +645,8 @@ lineariryCheck([delete(X) | Asm], Result, StateIn, StateOut) :-
     !lineariryCheck(Asm, Result, State1, StateOut).
 
 lineariryCheck([case(Expr, [Branch | Branches]) | Asm], Result, StateIn, StateOut) :-
-    stateMap(consumeVars, Expr, StateIn, State1),
     append(Branch, Asm, TotalAsm),
-    !lineariryCheck(TotalAsm, Result, State1, StateOut),
+    !lineariryCheck(TotalAsm, Result, StateIn, StateOut),
     lineariryCheck([case(Expr, Branches) | Asm], Result, StateIn, _).
 
 lineariryCheck([case(_, []) | _], _, State, State).
@@ -706,6 +723,17 @@ checkAssumptions([T:C | Rest]) :-
         checkAssumptions(Rest)
         ;
         throw(type_not_instance(T, C)).
+
+sumToList(Sum, List) :-
+    Sum = A+B ->
+        sumToList(A, L1),
+        sumToList(B, L2),
+        append(L1, L2, List)
+        ;
+        List = [Sum].
+
+my_callable(X) :- callable(X).
+my_callable([]).
 
 % Prelude
 :- compileStatement((union bool = true + false), []).

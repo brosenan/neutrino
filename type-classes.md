@@ -258,4 +258,32 @@ instance list(T) : seq(T) where {
         [First | Rest] => element(First, Rest)
     }
 }.
+
+instance int64 : seq(int64) where {
+    next(N) := element(N, N+1)
+}.
+
+S : seq(T) =>
+declare nth(S, int64) -> maybe(T).
+
+nth(Seq, Index) := case (Index == 0) of {
+    true => case next(Seq) of {
+        element(First, _) => just(First);
+        nothing => none
+    };
+    false => case next(Seq) of {
+        element(_, Next) => nth(Next, Index-1);
+        nothing => none
+    }
+}.
+
+assert case nth(2, 4) of {
+    none => false;
+    just(X) => X == 6
+}.
+
+assert case nth([1, 2, 3, 4], 2) of {
+    none => false;
+    just(X) => X == 3
+}.
 ```
