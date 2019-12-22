@@ -70,6 +70,18 @@ Method method2 does not depend on the instance type in the declaration of class 
 
 ## Instance Definitions
 
+Obviously, for an instance definition to be valid, the class must exist.
+
+```prolog
+instance int64 : foo where {
+    method1(A, B) := A+B
+}.
+```
+
+```error
+Type class foo does not exist.
+```
+
 An instance of a type-class must implement all methods declared by the type-class, in the same order.
 
 In the following example the instance is missing a method.
@@ -223,4 +235,27 @@ T:foo, T:bar =>
 declare foobar(T) -> T.
 
 foobar(X) := foo(bar(X)).
+```
+
+## Sequence Example
+
+In the following example we define a type-class named `seq(T)`, where `T` could be any type. A type in this class must implement `next`, which returns either `element(Head, Tail)`, with `Head` being the first element in the sequence and `Tail` being the rest of the sequence, or `empty` if the sequence has no members.
+
+We implement two instances. `list(T)` provides a sequence of the elements in the list, and `int64` which represents the integers from the given one upwards.
+
+The following example compiles successfully:
+
+```prolog
+union element(T, S) = element(T, S) + nothing.
+
+class S : seq(T) where {
+    next(S) -> element(T, S)
+}.
+
+instance list(T) : seq(T) where {
+    next(L) := case L of {
+        [] => nothing;
+        [First | Rest] => element(First, Rest)
+    }
+}.
 ```

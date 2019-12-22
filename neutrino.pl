@@ -85,7 +85,10 @@ compileStatement((class T:C where {Decls}), _VNs) :-
     validateClassDecls(Decls, C, T).
 
 compileStatement((instance T:C where {Defs}), VNs) :-
-    !type_class(C, T, Decls),
+    (type_class(C, T, Decls) ->
+        true
+        ;
+        throw(type_class_does_not_exist(C))),
     assert(class_instance(T, C)),
     !nameVars(VNs),
     !validateInstance(Decls, Defs, T, C),
@@ -190,6 +193,8 @@ formatError(method_does_not_depend_on_instance_type(Name, C),
      " does not depend on the instance type in the declaration of class ", C, "."]).
 formatError(type_not_instance(T, C),
     ["Type ", T, " is not an instance of class ", C, "."]).
+formatError(type_class_does_not_exist(C),
+    ["Type class ", C, " does not exist."]).
 
 writeln_list(S, [First | Rest]) :-
     write(S, First),
@@ -704,3 +709,6 @@ checkAssumptions([T:C | Rest]) :-
 
 % Prelude
 :- compileStatement((union bool = true + false), []).
+:- compileStatement((union list(T) = [] + [T | list(T)]), []).
+:- compileStatement((union maybe(T) = none + just(T)), []).
+

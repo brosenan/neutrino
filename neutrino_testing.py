@@ -89,6 +89,7 @@ def parse(spec_file_name):
 
 if __name__ == "__main__":
     tests = [test for filename in sys.argv[1:] for test in parse(filename)]
+    tests.reverse()
     passed = 0
     failed = 0
     for test in tests:
