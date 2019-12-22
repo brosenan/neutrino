@@ -19,7 +19,6 @@
 :- dynamic is_constructor/2.
 :- dynamic type_class/3.
 :- dynamic class_instance/2.
-:- discontiguous inferType/2.
 
 !Goal :- Goal, !.
 !Goal :- throw(unsatisfied(Goal)).
@@ -52,8 +51,9 @@ compileAll(SourceFile, S, Term, VNs) :-
 
 compileStatement((assert Expr), VNs) :-
     nameVars(VNs),
-    inferType(Expr, Type),
+    inferType(Expr, Type, Assumptions),
     matchType(Type, bool, Expr),
+    checkAssumptions(Assumptions),
     assembly(Expr, Result, [], Asm),
     lineariryCheck(Asm, Result, [], _).
 
@@ -102,14 +102,16 @@ compileStatement((declare Func -> Type), _VNs, Context) :-
 compileFunctionDefinition((Func := Body), TypeContext) :-
     walk(Func, replaceSingletosWithDelete, [], _),
     Func =.. [Name | Args],
-    inferType(Body, Type),
-    inferTypes(Args, ArgTypes),
+    inferType(Body, Type, BodyAssumptions),
+    inferTypes(Args, ArgTypes, ArgAssumptions),
     validateLValues(Args, ArgTypes),
     sameLength(ArgTypes, SigArgTypes),
     (type_signature(Name, SigArgTypes, SigType, TypeContext) ->
         !saturateTypes(TypeContext),
         matchTypes(ArgTypes, SigArgTypes, Args),
-        matchType(Type, SigType, Body)
+        matchType(Type, SigType, Body),
+        checkAssumptions(BodyAssumptions),
+        checkAssumptions(ArgAssumptions)
         ;
         validateArgTypes(Args),
         assert(type_signature(Name, ArgTypes, Type, []))),
@@ -119,10 +121,21 @@ compileFunctionDefinition((Func := Body), TypeContext) :-
     !lineariryCheck(Asm, Result, VarState1, _).
 
 
-inferType(_::T, T).
-inferType(N, int64) :- integer(N).
-inferType(N, float64) :- float(N).
-inferType(S, string) :- string(S).
+inferType(_::T, T, []).
+inferType(N, int64, []) :- integer(N).
+inferType(N, float64, []) :- float(N).
+inferType(S, string, []) :- string(S).
+
+inferType(Term, Type, Assumptions) :-
+    inferTypeSpecial(Term, Type, Assumptions) ->
+        true
+        ;
+        callable(Term),
+        Term =.. [Name | Args],
+        !type_signature(Name, ArgTypes, Type, Context),
+        inferTypes(Args, Types, ArgAssumptions),
+        append(Context, ArgAssumptions, Assumptions),
+        matchTypes(Types, ArgTypes, Args).
 
 matchType(T1, T2, Expr) :-
     unify_with_occurs_check(T1, T2) ->
@@ -175,9 +188,8 @@ formatError(instance_type_not_var_in_class_decl(T, C),
 formatError(method_does_not_depend_on_instance_type(Name, C),
     ["Method ", Name,
      " does not depend on the instance type in the declaration of class ", C, "."]).
-formatError(type_not_instance(T, C, Name),
-    ["Type ", T, " is not an instance of class ", C,
-     ", which is an assumption made by ", Name, "."]).
+formatError(type_not_instance(T, C),
+    ["Type ", T, " is not an instance of class ", C, "."]).
 
 writeln_list(S, [First | Rest]) :-
     write(S, First),
@@ -189,21 +201,11 @@ writeln_list(S, []) :-
 type_signature(==, [T, T], bool, []).
 type_signature(+, [T, T], T, []).
 
-inferType(Term, Type) :-
-    inferTypeSpecial(Term, Type) ->
-        true
-        ;
-        callable(Term),
-        Term =.. [Name | Args],
-        !type_signature(Name, ArgTypes, Type, Context),
-        inferTypes(Args, Types),
-        matchTypes(Types, ArgTypes, Args),
-        checkContext(Context, Name).
-
-inferTypes([], []).
-inferTypes([Arg | Args], [Type | Types]) :-
-    inferType(Arg, Type),
-    inferTypes(Args, Types).
+inferTypes([], [], []).
+inferTypes([Arg | Args], [Type | Types], Assumptions) :-
+    inferType(Arg, Type, Assumptions1),
+    inferTypes(Args, Types, Assumptions2),
+    append(Assumptions1, Assumptions2, Assumptions).
 
 matchTypes([], [], _).
 matchTypes([Type | Types], [ArgType | ArgTypes], [Expr | Exprs]) :-
@@ -281,17 +283,18 @@ verifyTypeVariable(Name::Kind) :-
         ;
         throw(double_use_of_var(Name)).
 
-inferTypeSpecial(case Expr of {Options}, OutType) :-
-    !inferType(Expr, InType),
+inferTypeSpecial(case Expr of {Options}, OutType, Assumptions) :-
+    !inferType(Expr, InType, ExprAssumptions),
     (union_type(InType, TypeOptions) ->
         true
         ;
         throw(bad_union_type(InType, Expr))),
-    validateCaseOptions(Options, TypeOptions, InType, OutType).
+    validateCaseOptions(Options, TypeOptions, InType, OutType, CaseAssumptions),
+    append(ExprAssumptions, CaseAssumptions, Assumptions).
 
-inferTypeSpecial('_', _).
+inferTypeSpecial('_', _, []).
 
-inferTypeSpecial(_::Type, Type).
+inferTypeSpecial(_::Type, Type, []).
 
 assertOptionSignatures(Options, Type) :-
     callable(Options),
@@ -304,19 +307,20 @@ assertOptionSignatures(Options, Type) :-
         length(Args, Arity),
         assert(is_constructor(Name, Arity)).
 
-validateCaseOptions(Options, TypeOptions, Type, OutType) :-
+validateCaseOptions(Options, TypeOptions, Type, OutType, Assumptions) :-
     TypeOptions = TyOp1 + TyOp2 ->
         (Options = (Pattern1 => Value1; Op2) ->
-            validateCaseOption(Pattern1, Value1, TyOp1, OutType),
-            validateCaseOptions(Op2, TyOp2, Type, OutType)
+            validateCaseOption(Pattern1, Value1, TyOp1, OutType, Assumptions1),
+            validateCaseOptions(Op2, TyOp2, Type, OutType, Assumptions2),
+            append(Assumptions1, Assumptions2, Assumptions)
             ;
             throw(incomplete_case_expr(TyOp2, Type)))
         ;
         !(Options = (Pattern => Value)),
         walk(Pattern, replaceSingletosWithDelete, [], _),
-        validateCaseOption(Pattern, Value, TypeOptions, OutType).
+        validateCaseOption(Pattern, Value, TypeOptions, OutType, Assumptions).
 
-validateCaseOption(Pattern, Value, Option, OutType) :-
+validateCaseOption(Pattern, Value, Option, OutType, Assumptions) :-
     Pattern =.. [PatternName | PatternArgs],
     Option =.. [OptionName | OptionArgs],
     (OptionName == PatternName ->
@@ -330,8 +334,8 @@ validateCaseOption(Pattern, Value, Option, OutType) :-
         ;
         throw(case_arity_mismatch(OptionName, PatternArity, OptionArity))),
     validateLValues(PatternArgs, OptionArgs),
-    inferType(Pattern, _),
-    inferType(Value, ValueType),
+    inferType(Pattern, _, _),
+    inferType(Value, ValueType, Assumptions),
     matchType(ValueType, OutType, Value).
 
 validateLValues([], []).
@@ -682,17 +686,17 @@ saturateTypes([]).
 saturateTypes([T:C | Rest]) :-
     gensym(unknown_type, Sym),
     (T =.. [Sym, C] ->
-        true
+        assert(class_instance(T, C))
         ;
         true),
     saturateTypes(Rest).
 
-checkContext([], _).
-checkContext([T:C | Rest], Name) :-
+checkAssumptions([]).
+checkAssumptions([T:C | Rest]) :-
     class_instance(T, C) ->
-        checkContext(Rest, Name)
+        checkAssumptions(Rest)
         ;
-        throw(type_not_instance(T, C, Name)).
+        throw(type_not_instance(T, C)).
 
 % Prelude
 :- compileStatement((union bool = true + false), []).

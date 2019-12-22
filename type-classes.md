@@ -205,5 +205,5 @@ assert greet_type("hola", 3.0) == "hola, float64".
 ```
 
 ```error
-Type float64 is not an instance of class named_type, which is an assumption made by greet_type.
+Type float64 is not an instance of class named_type.
 ```
