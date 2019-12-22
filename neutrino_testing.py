@@ -92,6 +92,7 @@ if __name__ == "__main__":
     passed = 0
     failed = 0
     for test in tests:
+        print(".")
         if test.run():
             passed += 1
         else:

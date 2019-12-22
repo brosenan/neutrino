@@ -51,7 +51,9 @@ compileAll(SourceFile, S, Term, VNs) :-
 compileStatement((assert Expr), VNs) :-
     nameVars(VNs),
     inferType(Expr, Type),
-    matchType(Type, bool, Expr).
+    matchType(Type, bool, Expr),
+    assembly(Expr, Result, [], Asm),
+    lineariryCheck(Asm, Result, [], _).
 
 compileStatement((Func := Body), VNs) :-
     nameVars(VNs),
@@ -70,9 +72,7 @@ compileStatement((Func := Body), VNs) :-
     !destructAssemblies(Args, DestArgs, [], DestAsm),
     !assembly(Body, Result, DestAsm, Asm),
     !stateMapList(introduceVars, DestArgs, [], VarState1),
-    !lineariryCheck(Asm, VarState1, VarState2),
-    !stateMap(consumeVars, Result, VarState2, VarState3),
-    transitionAll(removeVars, VarState3, _).
+    !lineariryCheck(Asm, Result, VarState1, _).
 
 compileStatement((declare Func -> Type), _VNs) :-
     Func =.. [Name | ArgTypes],
@@ -264,6 +264,7 @@ validateCaseOptions(Options, TypeOptions, Type, OutType) :-
             throw(incomplete_case_expr(TyOp2, Type)))
         ;
         !(Options = (Pattern => Value)),
+        walk(Pattern, replaceSingletosWithDelete, [], _),
         validateCaseOption(Pattern, Value, TypeOptions, OutType).
 
 validateCaseOption(Pattern, Value, Option, OutType) :-
@@ -539,29 +540,40 @@ destructAssemblies([Var::Type | Args], [Var::Type | DestArgs], AsmIn, AsmOut) :-
 destructAssemblies(['_' | Args], [X | DestArgs], AsmIn, AsmOut) :-
     destructAssemblies(Args, DestArgs, [delete(X) | AsmIn], AsmOut).
 
-lineariryCheck([], State, State).
-lineariryCheck([destruct(In, _, Outs) | Asm], StateIn, StateOut) :-
+lineariryCheck([], Result, StateIn, StateOut) :-
+    !stateMap(consumeVars, Result, StateIn, State1),
+    transitionAll(removeVars, State1, StateOut).
+
+lineariryCheck([destruct(In, _, Outs) | Asm], Result, StateIn, StateOut) :-
     stateMap(consumeVars, In, StateIn, State1),
     stateMapList(introduceVars, Outs, State1, State2),
-    !lineariryCheck(Asm, State2, StateOut).
+    !lineariryCheck(Asm, Result, State2, StateOut).
 
-lineariryCheck([construct(_, Ins, Out) | Asm], StateIn, StateOut) :-
+lineariryCheck([construct(_, Ins, Out) | Asm], Result, StateIn, StateOut) :-
     stateMapList(consumeVars, Ins, StateIn, State1),
     stateMap(introduceVars, Out, State1, State2),
-    !lineariryCheck(Asm, State2, StateOut).
+    !lineariryCheck(Asm, Result, State2, StateOut).
 
-lineariryCheck([call(_, Ins, Out) | Asm], StateIn, StateOut) :-
+lineariryCheck([call(_, Ins, Out) | Asm], Result, StateIn, StateOut) :-
     stateMapList(consumeVars, Ins, StateIn, State1),
     stateMap(introduceVars, Out, State1, State2),
-    !lineariryCheck(Asm, State2, StateOut).
+    !lineariryCheck(Asm, Result, State2, StateOut).
 
-lineariryCheck([constant(_, Out) | Asm], StateIn, StateOut) :-
+lineariryCheck([constant(_, Out) | Asm], Result, StateIn, StateOut) :-
     stateMap(introduceVars, Out, StateIn, State1),
-    !lineariryCheck(Asm, State1, StateOut).
+    !lineariryCheck(Asm, Result, State1, StateOut).
 
-lineariryCheck([delete(X) | Asm], StateIn, StateOut) :-
+lineariryCheck([delete(X) | Asm], Result, StateIn, StateOut) :-
     stateMap(consumeVars, X, StateIn, State1),
-    !lineariryCheck(Asm, State1, StateOut).
+    !lineariryCheck(Asm, Result, State1, StateOut).
+
+lineariryCheck([case(Expr, [Branch | Branches]) | Asm], Result, StateIn, StateOut) :-
+    stateMap(consumeVars, Expr, StateIn, State1),
+    append(Branch, Asm, TotalAsm),
+    !lineariryCheck(TotalAsm, Result, State1, StateOut),
+    lineariryCheck([case(Expr, Branches) | Asm], Result, StateIn, _).
+
+lineariryCheck([case(_, []) | _], _, State, State).
 
 % Prelude
 :- compileStatement((union bool = true + false), []).

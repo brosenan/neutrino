@@ -112,7 +112,7 @@ The following compiles successfully:
 union num_or_str = num(int64) + str(string).
 assert case num(3) of {
     num(N) => N == 3;
-    str(S) => false
+    str(S) => S == "foo"
 }.
 ```
 
@@ -124,7 +124,7 @@ In such `case` expressions, the arity (number of arguments) of each pattern must
 union num_or_str = num(int64) + str(string).
 assert case num(3) of {
     num(N1, N2) => N1 == 3;
-    str(S) => false
+    str(S) => S == "foo"
 }.
 ```
 
@@ -186,5 +186,52 @@ assert case num(3) of {
 
 ```error
 Type mismatch. Expression case num(3)of{num(N::int64)=>N::int64;str(S::string)=>42} expected to be bool, inferred: int64.
+```
+
+### Case Expressions and Linear Typing
+
+As discussed for [simple functions](simple-functions.md), Neutrino is linearly-typed, meaning that variables holding non-basic types must be consumed exactly once. In case expressions, this is done on a per-branch basis.
+
+In the following example the string variable `S` is introduced in the second branch and is used twice. This causes a compilation error.
+
+```prolog
+union foobar = foo(int64) + bar(string).
+
+assert case foo(3) of {
+    foo(N) => N == N;
+    bar(S) => S == S
+}.
+```
+
+```error
+Variable S of non-basic type string is used more than once.
+```
+
+Note that the error refers to variable `S` defined in the second branch and not variable `N` defined in the first branch, because the latter is of type `int64` which is a basic type.
+
+Because branches represent alternative execution, they should all agree on which variables are introduced or consumed. For example, the second branch in the following code _leaks_ variable `S` (but the first branch does not).
+
+```prolog
+union foobar = foo(string) + bar(string).
+
+assert case foo("bar") of {
+    foo(S) => S == "foo";
+    bar(S) => true
+}.
+```
+
+```error
+Variable S of non-basic type string is not used in this context.
+```
+
+To fix this, use `_` to replace unused variables. The following compiles successfully:
+
+```prolog
+union foobar = foo(string) + bar(string).
+
+assert case foo("bar") of {
+    foo(S) => S == "foo";
+    bar(_) => true
+}.
 ```
 
