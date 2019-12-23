@@ -19,6 +19,7 @@
 :- dynamic is_constructor/2.
 :- dynamic type_class/3.
 :- dynamic class_instance/2.
+:- dynamic fake_type/1.
 
 !Goal :- Goal, !.
 !Goal :- throw(unsatisfied(Goal)).
@@ -707,15 +708,19 @@ tupleToList(Tuple, List) :-
 
 saturateTypes([]).
 saturateTypes([T:C | Rest]) :-
-    (var(T) ->
-        gensym(unknown_type, T)
+    term_variables(T:C, Vars),
+    assignFakeTypes(Vars),
+    (fake_type(T) ->
+        assert(class_instance(T, C))
         ;
         true),
-    (type(T) ->
-        true
-        ;
-        assert(class_instance(T, C))),
     saturateTypes(Rest).
+
+assignFakeTypes([]).
+assignFakeTypes([V | Vars]) :-
+    gensym(unknown_type, V),
+    assert(fake_type(V)),
+    assignFakeTypes(Vars).
 
 checkAssumptions([]).
 checkAssumptions([T:C | Rest]) :-
@@ -738,5 +743,5 @@ my_callable([]).
 % Prelude
 :- compileStatement((union bool = true + false), []).
 :- compileStatement((union list(T) = [] + [T | list(T)]), []).
-:- compileStatement((union maybe(T) = none + just(T)), []).
+:- compileStatement((union maybe(T) = just(T) + none), []).
 

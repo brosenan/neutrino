@@ -237,7 +237,11 @@ declare foobar(T) -> T.
 foobar(X) := foo(bar(X)).
 ```
 
-## Sequence Example
+## Parametric Classes
+
+Type classes can take type parameters. With these parameters, the type class represents a relation between types. For example, in the [sequence example below](#sequence-example) the term `S : seq(T)` represents a relation between the sequence type `S` and the type of the elements it contains, `T`. 
+
+### Sequence Example
 
 In the following example we define a type-class named `seq(T)`, where `T` could be any type. A type in this class must implement `next`, which returns either `element(Head, Tail)`, with `Head` being the first element in the sequence and `Tail` being the rest of the sequence, or `empty` if the sequence has no members.
 
@@ -278,12 +282,44 @@ nth(Seq, Index) := case (Index == 0) of {
 }.
 
 assert case nth(2, 4) of {
-    none => false;
-    just(X) => X == 6
+    just(X) => X == 6;
+    none => false
 }.
 
 assert case nth([1, 2, 3, 4], 2) of {
-    none => false;
-    just(X) => X == 3
+    just(X) => X == 3;
+    none => false
 }.
+```
+
+### Generality of Parameter Types
+
+In the above example, `nth` is a polymorphic function which takes a sequence and an index and returns the nth element in the sequence if such exists (or `none` if such does not exist).
+
+Note that in `nth`'s declaration, `T` appears as a free variable, in the sense that we do not constrain it to any type-class (unlike `S`, which is bound to `seq(T)`). Thus, the definition of such a function cannot assume anything on type `T`. For example, adding 1 to the returned value will not compile:
+
+```prolog
+union element(T, S) = element(T, S) + nothing.
+
+class S : seq(T) where {
+    next(S) -> element(T, S)
+}.
+
+S : seq(T) =>
+declare nth(S, int64) -> maybe(T).
+
+nth(Seq, Index) := case (Index == 0) of {
+    true => case next(Seq) of {
+        element(First, _) => just(First+1); % Added 1 here
+        nothing => none
+    };
+    false => case next(Seq) of {
+        element(_, Next) => nth(Next, Index-1);
+        nothing => none
+    }
+}.
+```
+
+```error
+Type mismatch. Expression case (Index::int64==0)of{true=>case next(Seq::unknown_type1)of{element(First::int64,_)=>just(First::int64+1);nothing=>none};false=>case next(Seq::unknown_type1)of{element(_,Next::unknown_type1)=>nth(Next::unknown_type1,Index::int64-1);nothing=>none}} expected to be maybe(unknown_type2), inferred: maybe(int64).
 ```
