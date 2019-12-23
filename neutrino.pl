@@ -20,6 +20,7 @@
 :- dynamic type_class/3.
 :- dynamic class_instance/2.
 :- dynamic fake_type/1.
+:- dynamic is_struct/1.
 
 !Goal :- Goal, !.
 !Goal :- throw(unsatisfied(Goal)).
@@ -76,6 +77,18 @@ compileStatement((union Union = Options), VNs) :-
     verifyTypeVariables(Args),
     walk(Options, verifyVarIsType(Name), [], _),
     validateOptions(Options).
+
+compileStatement((struct Type = Constructor), VNs) :-
+    Constructor =.. [ConsName | ConsArgs],
+    assert(type_signature(ConsName, ConsArgs, Type, [])),
+    length(ConsArgs, ConsArity),
+    assert(is_struct(ConsName/ConsArity)),
+    assert(is_constructor(ConsName, ConsArity)),
+    Type =.. [Name | Args],
+    validateVars(Args),
+    nameVars(VNs),
+    verifyTypeVariables(Args),
+    walk(Constructor, verifyVarIsType(Name), [], _).
 
 compileStatement((class T:C where {Decls}), _VNs) :-
     declareClassFunctions(Decls, [T:C]),
@@ -232,12 +245,14 @@ nameVars([]).
 nameVars([Name=Name::_ | Rest]) :-
     nameVars(Rest).
 
-validateArgTypes([]).
-validateArgTypes([Name::Type | Args]) :-
-    (\+ground(Type) ->
-        throw(cannot_infer_type(Name));
-        true),
-    validateArgTypes(Args).
+validateArgTypes(Args) :-
+    walk(Args, validateVarType, [], _).
+
+validateVarType(Name::Type, State, State) :-
+    \+ground(Type) ->
+        throw(cannot_infer_type(Name))
+        ;
+        true.
 
 sameLength(L1, L2) :-
     length(L1, Len),
@@ -377,6 +392,14 @@ validateLValue(LValue, Type) :-
 lValue(LValue) :-
     LValue = (_::_).
 lValue('_').
+lValue(Cons) :-
+    my_callable(Cons),
+    Cons =.. [Name | Args],
+    length(Args, Arity),
+    is_struct(Name/Arity).
+    % length(Types, Arity),
+    % !type_signature(Name, Types, Type, _),
+    % !validateLValues(Args, Types).
 
 fake_simpleWalkPredicate(2, a, b).
 
@@ -617,6 +640,14 @@ destructAssemblies([Var::Type | Args], [Var::Type | DestArgs], AsmIn, AsmOut) :-
     destructAssemblies(Args, DestArgs, AsmIn, AsmOut).
 destructAssemblies(['_' | Args], [X | DestArgs], AsmIn, AsmOut) :-
     destructAssemblies(Args, DestArgs, [delete(X) | AsmIn], AsmOut).
+destructAssemblies([Cons | MoreArgs], [X | MoreDestArgs], AsmIn, AsmOut) :-
+    my_callable(Cons),
+    functor(Cons, Name, Arity),
+    is_struct(Name/Arity),
+    Cons =.. [_ | Args],
+    destructAssemblies(Args, DestArgs, AsmIn, AsmMid),
+    destructAssemblies(MoreArgs, MoreDestArgs, 
+        [destruct(X, Name, DestArgs) | AsmMid], AsmOut).
 
 lineariryCheck([], Result, StateIn, StateOut) :-
     !stateMap(consumeVars, Result, StateIn, State1),
@@ -742,6 +773,7 @@ my_callable([]).
 
 % Prelude
 :- compileStatement((union bool = true + false), []).
-:- compileStatement((union list(T) = [] + [T | list(T)]), []).
-:- compileStatement((union maybe(T) = just(T) + none), []).
+:- compileStatement((union list(T) = [] + [T | list(T)]), ['T'=T]).
+:- compileStatement((union maybe(T) = just(T) + none), ['T'=T]).
+:- compileStatement((struct (A, B) = (A, B)), ['A'=A, 'B'=B]).
 
