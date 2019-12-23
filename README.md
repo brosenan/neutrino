@@ -91,4 +91,5 @@ Neutrino is work in progress. Even when it will be code-complete, I don't expect
 * [Simple Expressions](simple-expressions.md)
 * [Simple Functions](simple-functions.md)
 * [Union Types](unions.md)
+* [Struct Types](structs.md)
 * [Type Classes](type-classes.md)
