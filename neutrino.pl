@@ -229,6 +229,7 @@ writeln_list(S, []) :-
 type_signature(==, [T, T], bool, []).
 type_signature(+, [T, T], T, []).
 type_signature(-, [T, T], T, []).
+type_signature(strlen, [&string], int64, []).
 
 inferTypes([], [], []).
 inferTypes([Arg | Args], [Type | Types], Assumptions) :-
@@ -316,8 +317,19 @@ verifyTypeVariable(Name::Kind) :-
         throw(double_use_of_var(Name)).
 
 inferTypeSpecial(case Expr of {Branches}, OutType, Assumptions) :-
+    inferCaseExprType(Expr, Branches, OutType, Assumptions, (=)).
+
+inferTypeSpecial(case Expr of & {Branches}, OutType, Assumptions) :-
+    inferCaseExprType(Expr, Branches, OutType, Assumptions, makeRef).
+
+inferTypeSpecial('_', _, []).
+
+inferTypeSpecial(_::Type, Type, []).
+
+inferCaseExprType(Expr, Branches, OutType, Assumptions, Modifier) :-
     !inferType(Expr, InType, ExprAssumptions),
-    !validateCaseOptions(Branches, InType, OutType, CaseAssumptions, 0, OptionCount),
+    !validateCaseOptions(
+        Branches, InType, OutType, CaseAssumptions, 0, OptionCount, Modifier),
     !union_type(InType, Options),
     (length(Options, OptionCount) ->
         true
@@ -326,9 +338,14 @@ inferTypeSpecial(case Expr of {Branches}, OutType, Assumptions) :-
         throw(incomplete_case_expr(Missing, InType))),
     append(ExprAssumptions, CaseAssumptions, Assumptions).
 
-inferTypeSpecial('_', _, []).
+makeRef(T, RefT) :-
+    nonvar(T), basicType(T) ->
+        RefT = T
+        ;
+        RefT = &T.
 
-inferTypeSpecial(_::Type, Type, []).
+union_type(&Type, Options) :-
+    union_type(Type, Options).
 
 assertOptionSignatures(Options, Type) :-
     my_callable(Options),
@@ -342,26 +359,33 @@ assertOptionSignatures(Options, Type) :-
         assert(is_constructor(Name, Arity)).
 
 validateCaseOptions((Branch; Branches),
-        Type, OutType, Assumptions, FirstIndex, LastIndex) :-
-    !validateCaseOption(Branch, Type, OutType, Assumptions1, FirstIndex),
+        Type, OutType, Assumptions, FirstIndex, LastIndex, Modifier) :-
+    !validateCaseOption(Branch, Type, OutType, Assumptions1, FirstIndex, Modifier),
     NextIndex is FirstIndex + 1,
-    !validateCaseOptions(Branches, Type, OutType, Assumptions2, NextIndex, LastIndex),
+    !validateCaseOptions(
+        Branches, Type, OutType, Assumptions2, NextIndex, LastIndex, Modifier),
     append(Assumptions1, Assumptions2, Assumptions).
 
-validateCaseOptions((Pattern => Expr), Type, OutType, Assumptions, Index, LastIndex) :-
-    !validateCaseOption((Pattern => Expr), Type, OutType, Assumptions, Index),
+validateCaseOptions((Pattern => Expr), 
+        Type, OutType, Assumptions, Index, LastIndex, Modifier) :-
+    !validateCaseOption((Pattern => Expr), Type, OutType, Assumptions, Index, Modifier),
     LastIndex is Index + 1.
 
-validateCaseOption((Pattern => Value), InType, OutType, Assumptions, Index) :-
+validateCaseOption((Pattern => Value), InType, OutType, Assumptions, Index, Modifier) :-
     walk(Pattern, replaceSingletosWithDelete, [], _),
-    !inferType(Pattern, InferredType, _),
-    !matchType(InferredType, InType, Pattern),
-    (union_type(InType, Options) ->
+    Pattern =.. [PatternName | PatternArgs],
+    !inferTypes(PatternArgs, PatternInferredTypes, _),
+    sameLength(PatternArgs, PatternTypes),
+    !type_signature(PatternName, PatternTypes, InferredType, _),
+    !modifyAll(PatternTypes, Modifier, PatternModTypes),
+    !call(Modifier, InferredType, ModType),
+    !matchTypes(PatternModTypes, PatternInferredTypes, PatternArgs),
+    !matchType(ModType, InType, Pattern),
+    (union_type(InferredType, Options) ->
         true
         ;
         throw(bad_union_type(InType, Pattern))),
     !nth0(Index, Options, Option),
-    Pattern =.. [PatternName | PatternArgs],
     Option =.. [OptionName | OptionArgs],
     (OptionName == PatternName ->
         true
@@ -374,7 +398,6 @@ validateCaseOption((Pattern => Value), InType, OutType, Assumptions, Index) :-
         ;
         throw(case_arity_mismatch(OptionName, PatternArity, OptionArity))),
     validateLValues(PatternArgs, OptionArgs),
-    inferType(Pattern, _, _),
     inferType(Value, ValueType, Assumptions),
     matchType(ValueType, OutType, Value).
 
@@ -604,6 +627,9 @@ assemblySpecial((case Expr of {Branches}), Val, AsmIn, AsmOut) :-
     branchesAssembly(ExprVal, Branches, Val, BranchesAsm),
     assembly(Expr, ExprVal, [case(ExprVal, BranchesAsm) | AsmIn], AsmOut).
 
+assemblySpecial((case Expr of & {Branches}), Val, AsmIn, AsmOut) :-
+    assemblySpecial((case Expr of {Branches}), Val, AsmIn, AsmOut).
+
 assembly(Expr, Val, AsmIn, AsmOut) :-
     assemblySpecial(Expr, Val, AsmIn, AsmOut) ->
         true
@@ -770,6 +796,11 @@ sumToList(Sum, List) :-
 
 my_callable(X) :- callable(X).
 my_callable([]).
+
+modifyAll([], _, []).
+modifyAll([A | As], Modifier, [B | Bs]) :-
+    call(Modifier, A, B),
+    modifyAll(As, Modifier, Bs).
 
 % Prelude
 :- compileStatement((union bool = true + false), []).
