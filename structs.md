@@ -8,22 +8,14 @@ In the following example we define a simple struct type named `foo`, which conta
 struct foo = foo(int64, string).
 ```
 
-## Destructing and Constructing Structs
-
-Unlike most imperative languages, where struct types give names to their fields and code can reference them by name, in Neutrino to access the fields of a struct it needs to be _destructed_. As the name implies, destructing a struct means it no longer exists as a struct.
-
-They are constructed using their constructor.
-
-The following compiles successfully:
+The parameters for the constructor must be valid types. For example, the following will fail.
 
 ```prolog
-struct foo = foo(int64, string).
+struct foo = foo(3, "foo").
+```
 
-the_number(foo(N, _)) := N.
-the_string(foo(_, S)) := S.
-
-assert the_number(foo(3, "hello")) == 3.
-assert the_string(foo(3, "hello")) == "hello".
+```error
+Expected type, found 3.
 ```
 
 ## Parametric Struct Types
@@ -52,4 +44,34 @@ struct pair(T) = pair(X, Y).
 
 ```error
 Variable X is not introduced in the definition of pair.
+```
+
+## Destructing and Constructing Structs
+
+Unlike most imperative languages, where struct types give names to their fields and code can reference them by name, in Neutrino to access the fields of a struct it needs to be _destructed_. As the name implies, destructing a struct means it no longer exists as a struct.
+
+They are constructed using their constructor.
+
+The following compiles successfully:
+
+```prolog
+struct foo = foo(int64, string).
+
+the_number(foo(N, _)) := N.
+the_string(foo(_, S)) := S.
+
+assert the_number(foo(3, "hello")) == 3.
+assert the_string(foo(3, "hello")) == "hello".
+```
+
+When destructing a struct, the parameters must be l-values.
+
+```prolog
+struct foo = foo(int64, string).
+
+bar(foo(N, "hello")) := N.
+```
+
+```error
+Expected l-value of type string. Found hello.
 ```

@@ -88,7 +88,8 @@ compileStatement((struct Type = Constructor), VNs) :-
     validateVars(Args),
     nameVars(VNs),
     verifyTypeVariables(Args),
-    walk(Constructor, verifyVarIsType(Name), [], _).
+    walk(Constructor, verifyVarIsType(Name), [], _),
+    validateTypes(ConsArgs).
 
 compileStatement((class T:C where {Decls}), _VNs) :-
     declareClassFunctions(Decls, [T:C]),
@@ -440,10 +441,10 @@ lValue(Cons) :-
     my_callable(Cons),
     Cons =.. [Name | Args],
     length(Args, Arity),
-    is_struct(Name/Arity).
-    % length(Types, Arity),
-    % !type_signature(Name, Types, Type, _),
-    % !validateLValues(Args, Types).
+    is_struct(Name/Arity),
+    length(Types, Arity),
+    !type_signature(Name, Types, _, _),
+    !validateLValues(Args, Types).
 
 lValue(&Val) :-
     my_callable(Val),
