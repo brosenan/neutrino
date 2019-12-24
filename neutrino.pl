@@ -133,8 +133,8 @@ compileFunctionDefinition((Func := Body), TypeContext) :-
         ;
         validateArgTypes(Args),
         assert(type_signature(Name, ArgTypes, Type, []))),
-    !destructAssemblies(Args, DestArgs, [], DestAsm),
-    !assembly(Body, Result, DestAsm, Asm),
+    !assembly(Body, Result, [], BodyAsm),
+    !destructAssemblies(Args, DestArgs, BodyAsm, Asm),
     !stateMapList(introduceVars, DestArgs, [], VarState1),
     !lineariryCheck(Asm, Result, VarState1, _).
 
@@ -326,6 +326,20 @@ inferTypeSpecial('_', _, []).
 
 inferTypeSpecial(_::Type, Type, []).
 
+inferTypeSpecial(&Expr, &Type, Assumptions) :-
+    my_callable(Expr),
+    functor(Expr, Name, Arity),
+    is_struct(Name/Arity) ->
+        length(ArgTypes, Arity),
+        type_signature(Name, ArgTypes, Type, Assumptions1),
+        modifyAll(ArgTypes, makeRef, ModArgTypes),
+        Expr =.. [_ | Args],
+        inferTypes(Args, InferredTypes, Assumptions2),
+        append(Assumptions1, Assumptions2, Assumptions),
+        matchTypes(InferredTypes, ModArgTypes, Args)
+        ;
+        inferType(Expr, Type, Assumptions).
+
 inferCaseExprType(Expr, Branches, OutType, Assumptions, Modifier) :-
     !inferType(Expr, InType, ExprAssumptions),
     !validateCaseOptions(
@@ -429,6 +443,11 @@ lValue(Cons) :-
     % length(Types, Arity),
     % !type_signature(Name, Types, Type, _),
     % !validateLValues(Args, Types).
+
+lValue(&Val) :-
+    my_callable(Val),
+    functor(Val, Name, Arity),
+    is_struct(Name/Arity).
 
 fake_simpleWalkPredicate(2, a, b).
 
@@ -688,10 +707,22 @@ branchesAssembly(Expr, Branches, Val, BranchesAsm) :-
         BranchesAsm = [[destruct(Expr, Name, DestArgs) | DestAsm]].
 
 destructAssemblies([], [], Asm, Asm).
+
 destructAssemblies([Var::Type | Args], [Var::Type | DestArgs], AsmIn, AsmOut) :-
     destructAssemblies(Args, DestArgs, AsmIn, AsmOut).
+
 destructAssemblies(['_' | Args], [X | DestArgs], AsmIn, AsmOut) :-
     destructAssemblies(Args, DestArgs, [delete(X) | AsmIn], AsmOut).
+
+destructAssemblies([&Cons | MoreArgs], [X | MoreDestArgs], AsmIn, AsmOut) :-
+    my_callable(Cons),
+    functor(Cons, Name, Arity),
+    is_struct(Name/Arity),
+    Cons =.. [_ | Args],
+    destructAssemblies(Args, DestArgs, AsmIn, AsmMid),
+    destructAssemblies(MoreArgs, MoreDestArgs, 
+        [destruct_ref(X, Name, DestArgs) | AsmMid], AsmOut).
+
 destructAssemblies([Cons | MoreArgs], [X | MoreDestArgs], AsmIn, AsmOut) :-
     my_callable(Cons),
     functor(Cons, Name, Arity),

@@ -31,3 +31,14 @@ sum_lengths(L) := case L of & {
 }.
 ```
 
+Destructing a reference to a struct is done by adding `&` before the struct's constructor.
+
+The following compiles successfully:
+
+```prolog
+struct foo = foo(int64, string).
+
+declare bar(&foo) -> int64.
+
+bar(&foo(N, S)) := strlen(S) + N.
+```
