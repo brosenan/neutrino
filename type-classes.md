@@ -250,21 +250,19 @@ We implement two instances. `list(T)` provides a sequence of the elements in the
 The following example compiles successfully:
 
 ```prolog
-union element(T, S) = element(T, S) + nothing.
-
 class S : seq(T) where {
-    next(S) -> element(T, S)
+    next(S) -> maybe((T, S))
 }.
 
 instance list(T) : seq(T) where {
     next(L) := case L of {
-        [] => nothing;
-        [First | Rest] => element(First, Rest)
+        [] => none;
+        [First | Rest] => just((First, Rest))
     }
 }.
 
 instance int64 : seq(int64) where {
-    next(N) := element(N, N+1)
+    next(N) := just((N, N+1))
 }.
 
 S : seq(T) =>
@@ -272,12 +270,12 @@ declare nth(S, int64) -> maybe(T).
 
 nth(Seq, Index) := case (Index == 0) of {
     true => case next(Seq) of {
-        element(First, _) => just(First);
-        nothing => none
+        just((First, _)) => just(First);
+        none => none
     };
     false => case next(Seq) of {
-        element(_, Next) => nth(Next, Index-1);
-        nothing => none
+        just((_, Next)) => nth(Next, Index-1);
+        none => none
     }
 }.
 
@@ -299,10 +297,8 @@ In the above example, `nth` is a polymorphic function which takes a sequence and
 Note that in `nth`'s declaration, `T` appears as a free variable, in the sense that we do not constrain it to any type-class (unlike `S`, which is bound to `seq(T)`). Thus, the definition of such a function cannot assume anything on type `T`. For example, adding 1 to the returned value will not compile:
 
 ```prolog
-union element(T, S) = element(T, S) + nothing.
-
 class S : seq(T) where {
-    next(S) -> element(T, S)
+    next(S) -> maybe((T, S))
 }.
 
 S : seq(T) =>
@@ -310,16 +306,16 @@ declare nth(S, int64) -> maybe(T).
 
 nth(Seq, Index) := case (Index == 0) of {
     true => case next(Seq) of {
-        element(First, _) => just(First+1); % Added 1 here
-        nothing => none
+        just((First, _)) => just(First+1); % Added 1 here
+        none => none
     };
     false => case next(Seq) of {
-        element(_, Next) => nth(Next, Index-1);
-        nothing => none
+        just((_, Next)) => nth(Next, Index-1);
+        none => none
     }
 }.
 ```
 
 ```error
-Type mismatch. Expression case (Index::int64==0)of{true=>case next(Seq::unknown_type1)of{element(First::int64,_)=>just(First::int64+1);nothing=>none};false=>case next(Seq::unknown_type1)of{element(_,Next::unknown_type1)=>nth(Next::unknown_type1,Index::int64-1);nothing=>none}} expected to be maybe(unknown_type2), inferred: maybe(int64).
+Type mismatch. Expression case (Index::int64==0)of{true=>case next(Seq::unknown_type1)of{just((First::int64,_))=>just(First::int64+1);none=>none};false=>case next(Seq::unknown_type1)of{just((_,Next::unknown_type1))=>nth(Next::unknown_type1,Index::int64-1);none=>none}} expected to be maybe(unknown_type2), inferred: maybe(int64).
 ```
