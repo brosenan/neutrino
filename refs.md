@@ -30,3 +30,4 @@ sum_lengths(L) := case L of & {
     [S | L1] => strlen(S) + sum_lengths(L1)
 }.
 ```
+

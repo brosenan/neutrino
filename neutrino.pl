@@ -373,6 +373,7 @@ validateCaseOptions((Pattern => Expr),
 
 validateCaseOption((Pattern => Value), InType, OutType, Assumptions, Index, Modifier) :-
     walk(Pattern, replaceSingletosWithDelete, [], _),
+    \+ \+ validateCasePattern(Pattern, Index),
     Pattern =.. [PatternName | PatternArgs],
     !inferTypes(PatternArgs, PatternInferredTypes, _),
     sameLength(PatternArgs, PatternTypes),
@@ -381,12 +382,18 @@ validateCaseOption((Pattern => Value), InType, OutType, Assumptions, Index, Modi
     !call(Modifier, InferredType, ModType),
     !matchTypes(PatternModTypes, PatternInferredTypes, PatternArgs),
     !matchType(ModType, InType, Pattern),
-    (union_type(InferredType, Options) ->
+    inferType(Value, ValueType, Assumptions),
+    matchType(ValueType, OutType, Value).
+
+validateCasePattern(Pattern, Index) :-
+    inferType(Pattern, Type, _),
+    (union_type(Type, Options) ->
         true
         ;
-        throw(bad_union_type(InType, Pattern))),
+        throw(bad_union_type(Type, Pattern))),
     !nth0(Index, Options, Option),
     Option =.. [OptionName | OptionArgs],
+    Pattern =.. [PatternName | PatternArgs],
     (OptionName == PatternName ->
         true
         ;
@@ -397,9 +404,8 @@ validateCaseOption((Pattern => Value), InType, OutType, Assumptions, Index, Modi
         true
         ;
         throw(case_arity_mismatch(OptionName, PatternArity, OptionArity))),
-    validateLValues(PatternArgs, OptionArgs),
-    inferType(Value, ValueType, Assumptions),
-    matchType(ValueType, OutType, Value).
+    validateLValues(PatternArgs, OptionArgs).
+
 
 validateLValues([], []).
 validateLValues([LValue | LValues], [Type | Types]) :-
@@ -615,6 +621,24 @@ test(case) :-
                               delete(Y),
                               construct(false, [], Val)]])]).
 
+% Case expression over reference types differ from normal case expressions
+% in that instead of using destruct they use destruct_ref (which extracts
+% the arguments but does not destroy the object), and in that deletes are
+% not placed.
+test(case_ref) :-
+    compileStatement((union foobar2 = foo2(string) + bar2(string)), []),
+    assembly((case foo2("hello") of & {
+        foo2('A'::(&string)) => 'A'::(&string) == 'A'::(&string);
+        bar2('_') => false
+    }), Val, [], Asm),
+    (Val, Asm) =@= (Val, [constant("hello", Hello),
+                          construct(foo2, [Hello], X),
+                          case(X,
+                              [[destruct_ref(X, foo2, ['A'::(&string)]),
+                              call(==, ['A'::(&string), 'A'::(&string)], Val)],
+                              [destruct_ref(X, bar2, [_]),
+                              construct(false, [], Val)]])]).
+
 :- end_tests(assembly).
 
 assemblySpecial(Expr, Val, Asm, [constant(Expr, Val) | Asm]) :-
@@ -628,7 +652,9 @@ assemblySpecial((case Expr of {Branches}), Val, AsmIn, AsmOut) :-
     assembly(Expr, ExprVal, [case(ExprVal, BranchesAsm) | AsmIn], AsmOut).
 
 assemblySpecial((case Expr of & {Branches}), Val, AsmIn, AsmOut) :-
-    assemblySpecial((case Expr of {Branches}), Val, AsmIn, AsmOut).
+    branchesAssembly(ExprVal, Branches, Val, BranchesAsm),
+    transformBranchesForRef(BranchesAsm, RefBranchesAsm),
+    assembly(Expr, ExprVal, [case(ExprVal, RefBranchesAsm) | AsmIn], AsmOut).
 
 assembly(Expr, Val, AsmIn, AsmOut) :-
     assemblySpecial(Expr, Val, AsmIn, AsmOut) ->
@@ -683,6 +709,9 @@ lineariryCheck([destruct(In, _, Outs) | Asm], Result, StateIn, StateOut) :-
     stateMap(consumeVars, In, StateIn, State1),
     stateMapList(introduceVars, Outs, State1, State2),
     !lineariryCheck(Asm, Result, State2, StateOut).
+
+lineariryCheck([destruct_ref(In, _, Outs) | Asm], Result, StateIn, StateOut) :-
+    lineariryCheck([destruct(In, _, Outs) | Asm], Result, StateIn, StateOut).
 
 lineariryCheck([construct(_, Ins, Out) | Asm], Result, StateIn, StateOut) :-
     stateMapList(consumeVars, Ins, StateIn, State1),
@@ -801,6 +830,25 @@ modifyAll([], _, []).
 modifyAll([A | As], Modifier, [B | Bs]) :-
     call(Modifier, A, B),
     modifyAll(As, Modifier, Bs).
+
+transformBranchesForRef([], []).
+transformBranchesForRef([BranchAsm | BranchesAsm], [RefBranchAsm | RefBranchesAsm]) :-
+    transformBranchForRef(BranchAsm, RefBranchAsm),
+    transformBranchesForRef(BranchesAsm, RefBranchesAsm).
+
+transformBranchForRef([], []).
+transformBranchForRef([Cmd | Cmds], CmdsRef) :-
+    Cmd = destruct(Expr, Name, Args) ->
+        transformBranchForRef([destruct_ref(Expr, Name, Args) | Cmds], CmdsRef)
+        ;
+        (Cmd = delete(_) ->
+            transformBranchForRef(Cmds, CmdsRef)
+            ;
+            CmdsRef = [Cmd | RestCmdsRef],
+            transformBranchForRef(Cmds, RestCmdsRef)).
+
+transformCommandForRef(destruct(Expr, Name, Args), destruct_ref(Expr, Name, Args)).
+
 
 % Prelude
 :- compileStatement((union bool = true + false), []).

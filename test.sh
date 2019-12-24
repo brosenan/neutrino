@@ -4,7 +4,7 @@ set -e
 set -x
 this_dir=$(dirname $0)
 
-md_files="simple-expressions.md simple-functions.md unions.md type-classes.md structs.md"
+md_files="simple-expressions.md simple-functions.md unions.md type-classes.md structs.md refs.md"
 
 $this_dir/swipl -f $this_dir/neutrino.pl -t run_tests
 
