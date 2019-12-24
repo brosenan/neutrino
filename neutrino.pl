@@ -733,9 +733,11 @@ destructAssemblies([&Cons | MoreArgs], [X | MoreDestArgs], AsmIn, AsmOut) :-
     functor(Cons, Name, Arity),
     is_struct(Name/Arity),
     Cons =.. [_ | Args],
-    destructAssemblies(Args, DestArgs, AsmIn, AsmMid),
-    destructAssemblies(MoreArgs, MoreDestArgs, 
-        [destruct_ref(X, Name, DestArgs) | AsmMid], AsmOut).
+    destructAssemblies(Args, DestArgs, [], ArgsAsm),
+    transformBranchForRef(ArgsAsm, ArgsAsmForRef),
+    destructAssemblies(MoreArgs, MoreDestArgs, [], MoreAsm),
+    append([destruct_ref(X, Name, DestArgs) | ArgsAsmForRef], MoreAsm, AsmMid),
+    append(AsmMid, AsmIn, AsmOut).
 
 destructAssemblies([Cons | MoreArgs], [X | MoreDestArgs], AsmIn, AsmOut) :-
     my_callable(Cons),
