@@ -57,7 +57,7 @@ compileStatement((assert Expr), VNs) :-
     matchType(Type, bool, Expr),
     checkAssumptions(Assumptions),
     assembly(Expr, Result, [], Asm),
-    lineariryCheck(Asm, Result, [], _).
+    linearityCheck(Asm, Result, [], _).
 
 compileStatement((Func := Body), VNs) :-
     nameVars(VNs),
@@ -141,7 +141,7 @@ compileFunctionDefinition((Func := Body), TypeContext) :-
     !assembly(Body, Result, [], BodyAsm),
     !destructAssemblies(Args, DestArgs, BodyAsm, Asm),
     !stateMapList(introduceVars, DestArgs, [], VarState1),
-    !lineariryCheck(Asm, Result, VarState1, _).
+    !linearityCheck(Asm, Result, VarState1, _).
 
 
 inferType(_::T, T, []).
@@ -233,9 +233,12 @@ writeln_list(S, []) :-
     writeln(S, "").
 
 type_signature(==, [T, T], bool, []).
-type_signature(+, [T, T], T, []).
-type_signature(-, [T, T], T, []).
+type_signature(int64_plus, [int64, int64], int64, []).
+type_signature(float64_plus, [float64, float64], float64, []).
+type_signature(int64_minus, [int64, int64], int64, []).
+type_signature(float64_minus, [float64, float64], float64, []).
 type_signature(strlen, [&string], int64, []).
+type_signature(strcat, [string, string], string, []).
 
 inferTypes([], [], []).
 inferTypes([Arg | Args], [Type | Types], Assumptions) :-
@@ -599,14 +602,14 @@ replaceSingletosWithDelete(Var, S, S) :-
 
 :- begin_tests(assembly).
 
-% Numbers and strings are assembled using the constant command.
+% Numbers and strings are assembled using the literal command.
 test(assemble_number) :-
     assembly(42, Val, [], Assembly),
-    Assembly == [constant(42, Val)].
+    Assembly == [literal(42, Val)].
 
 test(string) :-
     assembly("hello", Val, [], Assembly),
-    Assembly == [constant("hello", Val)].
+    Assembly == [literal("hello", Val)].
 
 % Variables and variable references are returned as their own value.
 test(var) :-
@@ -621,19 +624,21 @@ test(var_ref) :-
 
 % Functions use the call command.
 test(simple_func) :-
-    assembly(1+2, Val, [], Assembly),
-    (Val, Assembly) =@= (Val, [constant(2, Two),
-                               constant(1, One),
-                               call(+, [One, Two], Val)]).
+    once(assembly(1+2, Val::int64, [], Assembly)),
+    (Val, Assembly) =@= (Val,
+                        [literal(2, Two::int64),
+                         literal(1, One::int64),
+                         call(+, [One::int64, Two::int64], [int64:plus], Val::int64)]).
 
 % Nested functions are assembled bottom-up.
 test(nested_func) :-
-    assembly(1+2+3, Val, [], Assembly),
-    (Val, Assembly) =@= (Val, [constant(3, Three),
-                               constant(2, Two), 
-                               constant(1, One),
-                               call(+, [One, Two], X),
-                               call(+, [X, Three], Val)]).
+    once(assembly(1+2+3, Val::int64, [], Assembly)),
+    (Val, Assembly) =@= (Val,
+                        [literal(3, Three::int64),
+                         literal(2, Two::int64), 
+                         literal(1, One::int64),
+                         call(+, [One::int64, Two::int64], [int64:plus], X::int64),
+                         call(+, [X::int64, Three::int64], [int64:plus], Val::int64)]).
 
 % Case expressions are assembled by first assembling the expression being matched,
 % then for each branch assembling a sequence that first destructs the pattern and
@@ -644,15 +649,17 @@ test(case) :-
         foo1('A'::int64) => 'A'::int64 == 1;
         bar1('_') => false
     }), Val, [], Asm),
-    (Val, Asm) =@= (Val, [constant(42, FourtyTwo),
-                          construct(foo1, [FourtyTwo], X),
-                          case(X, 
-                              [[destruct(X, foo1, ['A'::int64]),
-                              constant(1, One),
-                              call(==, ['A'::int64, One], Val)],
-                              [destruct(X, bar1, [Y]),
-                              delete(Y),
-                              construct(false, [], Val)]])]).
+    (Val, Asm) =@= (V::bool,
+                    [literal(42, FourtyTwo::int64),
+                     construct(foo1, [FourtyTwo::int64], X::foobar1),
+                     case(X::foobar1,
+                        [[destruct(X::foobar1, foo1, ['A'::int64]),
+                          literal(1, One::int64),
+                          call(==, ['A'::int64, One::int64], [], V::bool)],
+                         [destruct(X::foobar1, bar1, [Y]),
+                          delete(Y),
+                          construct(false, [], V::bool)]])]).
+
 
 % Case expression over reference types differ from normal case expressions
 % in that instead of using destruct they use destruct_ref (which extracts
@@ -664,17 +671,17 @@ test(case_ref) :-
         foo2('A'::(&string)) => 'A'::(&string) == 'A'::(&string);
         bar2('_') => false
     }), Val, [], Asm),
-    (Val, Asm) =@= (Val, [constant("hello", Hello),
-                          construct(foo2, [Hello], X),
-                          case(X,
-                              [[destruct_ref(X, foo2, ['A'::(&string)]),
-                              call(==, ['A'::(&string), 'A'::(&string)], Val)],
-                              [destruct_ref(X, bar2, [_]),
-                              construct(false, [], Val)]])]).
-
+    (Val, Asm) =@= (V::bool,
+                    [literal("hello", Hello::string),
+                     construct(foo2, [Hello::string], X::foobar2),
+                     case(X::foobar2,
+                     [[destruct_ref(X::foobar2, foo2, ['A'::(&string)]),
+                       call(==, ['A'::(&string), 'A'::(&string)], [], V::bool)],
+                      [destruct_ref(X::foobar2, bar2, [_]),
+                       construct(false, [], V::bool)]])]).
 :- end_tests(assembly).
 
-assemblySpecial(Expr, Val, Asm, [constant(Expr, Val) | Asm]) :-
+assemblySpecial(Expr, Val, Asm, [literal(Expr, Val) | Asm]) :-
     isSimpleExpr(Expr).
 
 assemblySpecial(Name::Type, Name::Type, Asm, Asm).
@@ -695,10 +702,14 @@ assembly(Expr, Val, AsmIn, AsmOut) :-
         ;
         Expr =.. [Name | Args],
         length(Args, Arity),
+        length(ArgTypes, Arity),
+        type_signature(Name, ArgTypes, Type, Assumptions),
+        Val = _::Type,
         (is_constructor(Name, Arity) ->
             assemblies(Args, Vals, [construct(Name, Vals, Val) | AsmIn], AsmOut)
             ;
-            assemblies(Args, Vals, [call(Name, Vals, Val) | AsmIn], AsmOut)).
+            assemblies(Args, Vals, [call(Name, Vals, Assumptions, Val) | AsmIn], AsmOut)),
+        inferTypes(Vals, ArgTypes, _).
 
 assemblies([], [], Asm, Asm).
 assemblies([Expr | Exprs], [Val | Vals], AsmIn, AsmOut) :-
@@ -748,45 +759,45 @@ destructAssemblies([Cons | MoreArgs], [X | MoreDestArgs], AsmIn, AsmOut) :-
     destructAssemblies(MoreArgs, MoreDestArgs, 
         [destruct(X, Name, DestArgs) | AsmMid], AsmOut).
 
-lineariryCheck([], Result, StateIn, StateOut) :-
+linearityCheck([], Result, StateIn, StateOut) :-
     !consumeVar(Result, StateIn, State1),
     transitionAll(removeVars, State1, StateOut).
 
-lineariryCheck([First | Rest], Result, StateIn, StateOut) :-
-    lineariryCheckStep(First, Result, StateIn, State1),
+linearityCheck([First | Rest], Result, StateIn, StateOut) :-
+    linearityCheckStep(First, Result, StateIn, State1),
     unlendVars(State1, State2),
-    lineariryCheck(Rest, Result, State2, StateOut).
+    linearityCheck(Rest, Result, State2, StateOut).
 
-lineariryCheck([case(Expr, [Branch | Branches]) | Asm], Result, StateIn, StateOut) :-
+linearityCheck([case(Expr, [Branch | Branches]) | Asm], Result, StateIn, StateOut) :-
     append(Branch, Asm, TotalAsm),
-    !lineariryCheck(TotalAsm, Result, StateIn, StateOut),
-    lineariryCheck([case(Expr, Branches) | Asm], Result, StateIn, _).
+    !linearityCheck(TotalAsm, Result, StateIn, StateOut),
+    linearityCheck([case(Expr, Branches) | Asm], Result, StateIn, _).
 
-lineariryCheck([case(_, []) | _], _, State, State).
+linearityCheck([case(_, []) | _], _, State, State).
 
-lineariryCheckStep(destruct(In, _, Outs), _, StateIn, StateOut) :-
+linearityCheckStep(destruct(In, _, Outs), _, StateIn, StateOut) :-
     consumeVar(In, StateIn, State1),
     introduceVarList(Outs, State1, StateOut).
 
-lineariryCheckStep(destruct_ref(In, Name, Outs), Result, StateIn, StateOut) :-
-    lineariryCheckStep(destruct(In, Name, Outs), Result, StateIn, StateOut).
+linearityCheckStep(destruct_ref(In, Name, Outs), Result, StateIn, StateOut) :-
+    linearityCheckStep(destruct(In, Name, Outs), Result, StateIn, StateOut).
 
-lineariryCheckStep(construct(_, Ins, Out), _, StateIn, StateOut) :-
+linearityCheckStep(construct(_, Ins, Out), _, StateIn, StateOut) :-
     consumeVarList(Ins, StateIn, State1),
     introduceVar(Out, State1, StateOut).
 
-lineariryCheckStep(call(_, Ins, Out), _, StateIn, StateOut) :-
+linearityCheckStep(call(_, Ins, _, Out), _, StateIn, StateOut) :-
     !consumeVarList(Ins, StateIn, State1),
     introduceVar(Out, State1, StateOut).
 
-lineariryCheckStep(constant(_, Out), _, StateIn, StateOut) :-
+linearityCheckStep(literal(_, Out), _, StateIn, StateOut) :-
     introduceVar(Out, StateIn, StateOut).
 
-lineariryCheckStep(delete(X), _, StateIn, StateOut) :-
+linearityCheckStep(delete(X), _, StateIn, StateOut) :-
     consumeVar(X, StateIn, StateOut).
 
 consumeVar(Var, StateIn, StateOut) :-
-    var(Var) ->
+    \+ \+((Var = V::_, var(V))) ->
         StateOut = StateIn
         ;
         (Var = _::_ ->
@@ -803,10 +814,15 @@ consumeVarList([Var | Vars], StateIn, StateOut) :-
     consumeVarList(Vars, StateMid, StateOut).
 
 introduceVar(Var, StateIn, StateOut) :-
-    stateMap(introduceVars, Var, StateIn, StateOut).
+    \+ \+((Var = V::_, var(V))) ->
+        StateOut = StateIn
+        ;
+        stateMap(introduceVars, Var, StateIn, StateOut).
 
-introduceVarList(Vars, StateIn, StateOut) :-
-    stateMapList(introduceVars, Vars, StateIn, StateOut).
+introduceVarList([], State, State).
+introduceVarList([Var | Vars], StateIn, StateOut) :-
+    introduceVar(Var, StateIn, StateMid),
+    introduceVarList(Vars, StateMid, StateOut).
 
 unlendVars([], []).
 unlendVars([Key=StateIn | StatesIn], [Key=StateOut | StatesOut]) :-
@@ -936,4 +952,15 @@ transformCommandForRef(destruct(Expr, Name, Args), destruct_ref(Expr, Name, Args
 :- compileStatement((union list(T) = [] + [T | list(T)]), ['T'=T]).
 :- compileStatement((union maybe(T) = just(T) + none), ['T'=T]).
 :- compileStatement((struct (A, B) = (A, B)), ['A'=A, 'B'=B]).
-
+:- compileStatement((class T : plus where { T+T->T }), ['T'=T]).
+:- compileStatement((instance int64 : plus where { A+B := int64_plus(A, B) }),
+    ['A'=A, 'B'=B]).
+:- compileStatement((instance float64 : plus where { A+B := float64_plus(A, B) }),
+    ['A'=A, 'B'=B]).
+:- compileStatement((instance string : plus where { A+B := strcat(A, B) }),
+    ['A'=A, 'B'=B]).
+:- compileStatement((class T : minus where { T-T->T }), ['T'=T]).
+:- compileStatement((instance int64 : minus where { A-B := int64_minus(A, B) }),
+    ['A'=A, 'B'=B]).
+:- compileStatement((instance float64 : minus where { A-B := float64_minus(A, B) }),
+    ['A'=A, 'B'=B]).
