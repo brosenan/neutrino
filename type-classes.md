@@ -68,7 +68,9 @@ class F : foo where {
 Method method2 does not depend on the instance type in the declaration of class foo.
 ```
 
-## Instance Definitions
+## Simple Instance Definitions
+
+Simple, or monomorphic instance definitions are instance definitions that reference a single concrete type. The `named_type` example at the beginning of this doc defines such instances for `int64` and `float64`.
 
 Obviously, for an instance definition to be valid, the class must exist.
 
@@ -318,4 +320,35 @@ nth(Seq, Index) := case (Index == 0) of {
 
 ```error
 Type mismatch. Expression case (Index::int64==0)of{true=>case next(Seq::unknown_type1)of{just((First::int64,_))=>just(First::int64+1);none=>none};false=>case next(Seq::unknown_type1)of{just((_,Next::unknown_type1))=>nth(Next::unknown_type1,Index::int64-1);none=>none}} expected to be maybe(unknown_type2), inferred: maybe(int64).
+```
+
+## Polymorphic Instance Definitions
+
+Unlike a [monomorphic instance definition](#simple-instance-definitions), which define a single concrete type as an instance, a polymorphic instance definition defines a family of types as instances of a class. For example, the instance definition for `list(T)` in the above [sequence example](#sequence-example) is a polymorphic instance definition, because it abstracts over all element types (the different values `T` can take) and provides method definitions as polymorphic functions.
+
+In the sequence example, `T` was just a type. We did not make any assumption on what it was. A list of things became a sequence of things. However, sometimes we need to make such assumptions.
+
+Consider the `named_type` example from the beginning of this doc. So far we have seen how we could name concrete types. But how do we name parametric types such as `list(T)`? Obviously, we cannot do this for just any `T`. We need to assume `T` is by itself a `named_type`. If it is, naming `list(T)` is as simple as wrapping `T`'s name with `list(` and `)`.
+
+The following compiles successfully:
+
+```prolog
+class T : named_type where {
+    type_name(T) -> string
+}.
+
+T : named_type =>
+instance list(T) : named_type where {
+    type_name(L) := case L of {
+        [] => "nil";
+        [Elem | _] => "list(" + type_name(Elem) + ")"
+    }
+}.
+
+instance int64 : named_type where {
+    type_name(_) := "int64"
+}.
+
+assert type_name([1, 2, 3]) == "list(int64)".
+assert type_name([]) == "nil".
 ```

@@ -101,14 +101,7 @@ compileStatement((class T:C where {Decls}), _VNs) :-
     validateClassDecls(Decls, C, T).
 
 compileStatement((instance T:C where {Defs}), VNs) :-
-    (type_class(C, T, Decls) ->
-        true
-        ;
-        throw(type_class_does_not_exist(C))),
-    assert(class_instance(T, C)),
-    !nameVars(VNs),
-    !validateInstance(Decls, Defs, T, C),
-    compileMethods(Defs, [T:C]).
+    compileStatement((instance T:C where {Defs}), VNs, []).
 
 compileStatement((Context => Statement), VNs) :-
     tupleToList(Context, ContextAsList),
@@ -117,6 +110,17 @@ compileStatement((Context => Statement), VNs) :-
 compileStatement((declare Func -> Type), _VNs, Context) :-
     Func =.. [Name | ArgTypes],
     assert(type_signature(Name, ArgTypes, Type, Context)).
+
+compileStatement((instance T:C where {Defs}), VNs, Context) :-
+    (type_class(C, T, Decls) ->
+        true
+        ;
+        throw(type_class_does_not_exist(C))),
+    assert(class_instance(T, C)),
+    !nameVars(VNs),
+    !validateInstance(Decls, Defs, T, C),
+    saturateTypes(Context),
+    compileMethods(Defs, [T:C]).
 
 compileFunctionDefinition((Func := Body), TypeContext) :-
     walk(Func, replaceSingletosWithDelete, [], _),
@@ -340,6 +344,7 @@ inferTypeSpecial(&Expr, &Type, Assumptions) :-
         append(Assumptions1, Assumptions2, Assumptions),
         matchTypes(InferredTypes, ModArgTypes, Args)
         ;
+        Expr=_::_,
         inferType(Expr, Type, Assumptions).
 
 inferCaseExprType(Expr, Branches, OutType, Assumptions, Modifier) :-
@@ -449,7 +454,8 @@ lValue(Cons) :-
 lValue(&Val) :-
     my_callable(Val),
     functor(Val, Name, Arity),
-    is_struct(Name/Arity).
+    is_struct(Name/Arity),
+    lValue(Val).
 
 fake_simpleWalkPredicate(2, a, b).
 
@@ -871,6 +877,9 @@ saturateTypes([T:C | Rest]) :-
         ;
         true),
     saturateTypes(Rest).
+
+fake_type(Name::_) :-
+    atom(Name).
 
 assignFakeTypes([]).
 assignFakeTypes([V | Vars]) :-
