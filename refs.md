@@ -42,3 +42,42 @@ declare bar(&foo) -> int64.
 
 bar(&foo(N, S)) := strlen(S) + N.
 ```
+
+## Referencing Owned Objects
+
+When a function owns an object (i.e., receives it as a non-reference), it may _lend_ a reference to the object to other functions. There is no restriction on the number of times an object can be lent. However, an object cannot be consumed while being lent.
+
+In the following example we define functions `foo` and `bar`. `foo` takes ownership of a string. It calls `strlen` twice, each time with a reference of that string, and then calls `bar` giving it the two length values and the string itself (passing ownership). It compiles successfully:
+
+```prolog
+declare bar(int64, string, int64) -> int64.
+bar(N1, _, N2) := N1 + N2.
+
+foo(S) := bar(strlen(&S), S, strlen(&S)).
+```
+
+The above example compiles because the two borrows happen _before_ `S` is being consumed. The two calls to `strlen` happen first, and then the results are forwarded to `bar`. However, if we wish to send `S` to a function both as an owned object and as a reference, we would get a compilation error.
+
+```prolog
+declare bar(&string, string) -> int64.
+bar(_, _) := 4.
+
+foo(S) := bar(&S, S).
+```
+
+```error
+Attempt to both consume and lend variable S in a single step.
+```
+
+The order of parameters does not matter.
+
+```prolog
+declare bar(string, &string) -> int64.
+bar(_, _) := 4.
+
+foo(S) := bar(S, &S).
+```
+
+```error
+Attempt to both consume and lend variable S in a single step.
+```

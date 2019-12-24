@@ -217,7 +217,8 @@ formatError(type_class_does_not_exist(C),
     ["Type class ", C, " does not exist."]).
 formatError(undefined_expression(Functor),
     ["Undefined expression ", Functor, "."]).
-
+formatError(lend_and_consume(Name),
+    ["Attempt to both consume and lend variable ", Name, " in a single step."]).
 
 writeln_list(S, [First | Rest]) :-
     write(S, First),
@@ -572,6 +573,12 @@ consumeVars(_::Type, new, consumed) :-
     \+basicType(Type).
 consumeVars(Var::Type, consumed, _) :-
     throw(var_used_more_than_once(Var, Type)).
+consumeVars(Var::_, borrowed, _) :-
+    throw(lend_and_consume(Var)).
+
+borrowVars(_::_, new, borrowed).
+borrowVars(Name::_, consumed, _) :-
+    throw(lend_and_consume(Name)).
 
 removeVars(Var::Type, new, _) :-
     \+basicType(Type),
@@ -733,34 +740,13 @@ destructAssemblies([Cons | MoreArgs], [X | MoreDestArgs], AsmIn, AsmOut) :-
         [destruct(X, Name, DestArgs) | AsmMid], AsmOut).
 
 lineariryCheck([], Result, StateIn, StateOut) :-
-    !stateMap(consumeVars, Result, StateIn, State1),
+    !consumeVar(Result, StateIn, State1),
     transitionAll(removeVars, State1, StateOut).
 
-lineariryCheck([destruct(In, _, Outs) | Asm], Result, StateIn, StateOut) :-
-    stateMap(consumeVars, In, StateIn, State1),
-    stateMapList(introduceVars, Outs, State1, State2),
-    !lineariryCheck(Asm, Result, State2, StateOut).
-
-lineariryCheck([destruct_ref(In, _, Outs) | Asm], Result, StateIn, StateOut) :-
-    lineariryCheck([destruct(In, _, Outs) | Asm], Result, StateIn, StateOut).
-
-lineariryCheck([construct(_, Ins, Out) | Asm], Result, StateIn, StateOut) :-
-    stateMapList(consumeVars, Ins, StateIn, State1),
-    stateMap(introduceVars, Out, State1, State2),
-    !lineariryCheck(Asm, Result, State2, StateOut).
-
-lineariryCheck([call(_, Ins, Out) | Asm], Result, StateIn, StateOut) :-
-    stateMapList(consumeVars, Ins, StateIn, State1),
-    stateMap(introduceVars, Out, State1, State2),
-    !lineariryCheck(Asm, Result, State2, StateOut).
-
-lineariryCheck([constant(_, Out) | Asm], Result, StateIn, StateOut) :-
-    stateMap(introduceVars, Out, StateIn, State1),
-    !lineariryCheck(Asm, Result, State1, StateOut).
-
-lineariryCheck([delete(X) | Asm], Result, StateIn, StateOut) :-
-    stateMap(consumeVars, X, StateIn, State1),
-    !lineariryCheck(Asm, Result, State1, StateOut).
+lineariryCheck([First | Rest], Result, StateIn, StateOut) :-
+    lineariryCheckStep(First, Result, StateIn, State1),
+    unlendVars(State1, State2),
+    lineariryCheck(Rest, Result, State2, StateOut).
 
 lineariryCheck([case(Expr, [Branch | Branches]) | Asm], Result, StateIn, StateOut) :-
     append(Branch, Asm, TotalAsm),
@@ -768,6 +754,58 @@ lineariryCheck([case(Expr, [Branch | Branches]) | Asm], Result, StateIn, StateOu
     lineariryCheck([case(Expr, Branches) | Asm], Result, StateIn, _).
 
 lineariryCheck([case(_, []) | _], _, State, State).
+
+lineariryCheckStep(destruct(In, _, Outs), _, StateIn, StateOut) :-
+    consumeVar(In, StateIn, State1),
+    introduceVarList(Outs, State1, StateOut).
+
+lineariryCheckStep(destruct_ref(In, Name, Outs), Result, StateIn, StateOut) :-
+    lineariryCheckStep(destruct(In, Name, Outs), Result, StateIn, StateOut).
+
+lineariryCheckStep(construct(_, Ins, Out), _, StateIn, StateOut) :-
+    consumeVarList(Ins, StateIn, State1),
+    introduceVar(Out, State1, StateOut).
+
+lineariryCheckStep(call(_, Ins, Out), _, StateIn, StateOut) :-
+    !consumeVarList(Ins, StateIn, State1),
+    introduceVar(Out, State1, StateOut).
+
+lineariryCheckStep(constant(_, Out), _, StateIn, StateOut) :-
+    introduceVar(Out, StateIn, StateOut).
+
+lineariryCheckStep(delete(X), _, StateIn, StateOut) :-
+    consumeVar(X, StateIn, StateOut).
+
+consumeVar(Var, StateIn, StateOut) :-
+    var(Var) ->
+        StateOut = StateIn
+        ;
+        (Var = _::_ ->
+            stateMap(consumeVars, Var, StateIn, StateOut)
+            ;
+            (Var = &Name::Type ->
+                !stateMap(borrowVars, Name::Type, StateIn, StateOut)
+                ;
+                throw(unsupported_variable(Var)))).
+
+consumeVarList([], State, State).
+consumeVarList([Var | Vars], StateIn, StateOut) :-
+    consumeVar(Var, StateIn, StateMid),
+    consumeVarList(Vars, StateMid, StateOut).
+
+introduceVar(Var, StateIn, StateOut) :-
+    stateMap(introduceVars, Var, StateIn, StateOut).
+
+introduceVarList(Vars, StateIn, StateOut) :-
+    stateMapList(introduceVars, Vars, StateIn, StateOut).
+
+unlendVars([], []).
+unlendVars([Key=StateIn | StatesIn], [Key=StateOut | StatesOut]) :-
+    (StateIn = borrowed ->
+        StateOut = new
+        ;
+        StateOut = StateIn),
+    unlendVars(StatesIn, StatesOut).
 
 declareClassFunctions((Func -> Type), TypeContext) :-
     Func =.. [Name | Args],
