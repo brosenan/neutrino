@@ -1,4 +1,5 @@
 :- op(1090, xfx, =>).
+:- op(1090, xfx, :=).
 :- op(1070, fx, declare).
 :- op(1050, fx, assert).
 :- op(1050, fx, union).
@@ -17,7 +18,7 @@
 :- dynamic type/1.
 :- dynamic union_type/2.
 :- dynamic is_constructor/2.
-:- dynamic type_class/3.
+:- dynamic type_class/4.
 :- dynamic class_instance/2.
 :- dynamic fake_type/1.
 :- dynamic is_struct/1.
@@ -63,9 +64,9 @@ compileStatement((assert Expr), VNs) :-
     once(assembly(Expr, Result, [], Asm)),
     linearityCheck(Asm, Result, [], _),
     unnameVars((Asm, Result), (UnAsm, UnResult)),
-    specialize(UnAsm, _),
+    specialize(UnAsm, Residual),
     \+(UnResult == true) ->
-        throw(assertion_failed(UnResult))
+        throw(assertion_failed(UnResult, Residual))
         ;
         true.
 
@@ -101,14 +102,8 @@ compileStatement((struct Type = Constructor), VNs) :-
     walk(Constructor, verifyVarIsType(Name), [], _),
     validateTypes(ConsArgs).
 
-compileStatement((class T:C where {Decls}), _VNs) :-
-    declareClassFunctions(Decls, [T:C]),
-    assert(type_class(C, T, Decls)),
-    (var(T) ->
-        true
-        ;
-        throw(instance_type_not_var_in_class_decl(T, C))),
-    validateClassDecls(Decls, C, T).
+compileStatement((class T:C where {Decls}), VNs) :-
+    compileStatement((class T:C where {Decls}), VNs, []).
 
 compileStatement((instance T:C where {Defs}), VNs) :-
     compileStatement((instance T:C where {Defs}), VNs, []).
@@ -122,7 +117,7 @@ compileStatement((declare Func -> Type), _VNs, Context) :-
     assert(type_signature(Name, ArgTypes, Type, Context)).
 
 compileStatement((instance T:C where {Defs}), VNs, Context) :-
-    (type_class(C, T, Decls) ->
+    (type_class(C, T, Decls, ClassContext) ->
         true
         ;
         throw(type_class_does_not_exist(C))),
@@ -130,7 +125,19 @@ compileStatement((instance T:C where {Defs}), VNs, Context) :-
     !nameVars(VNs),
     !validateInstance(Decls, Defs, T, C),
     saturateTypes(Context),
-    compileMethods(Defs, [T:C]).
+    compileMethods(Defs, ClassContext).
+
+compileStatement((class T:C where {Decls}), VNs, Context) :-
+    ClassCtx = [T:C | Context],
+    declareClassFunctions(Decls, ClassCtx),
+    assert(type_class(C, T, Decls, ClassCtx)),
+    (var(T) ->
+        true
+        ;
+        throw(instance_type_not_var_in_class_decl(T, C))),
+    validateClassDecls(Decls, C, T),
+    nameVars(VNs),
+    validateDecls(Decls, ClassCtx).
 
 compileFunctionDefinition((Func := Body), TypeContext) :-
     walk(Func, replaceSingletosWithDelete, [], _),
@@ -238,9 +245,11 @@ formatError(undefined_expression(Functor),
     ["Undefined expression ", Functor, "."]).
 formatError(lend_and_consume(Name),
     ["Attempt to both consume and lend variable ", Name, " in a single step."]).
-formatError(assertion_failed(Result),
-    ["Assertion has failed. Expected true, got ", Result, "."]).
-
+formatError(assertion_failed(Result, Residual),
+    ["Assertion has failed. Expected true, got ", Result,
+     ". Redsidual code: ", Residual]).
+formatError(type_var_not_declared(Type),
+    ["Type variable ", Type, " has not been declared in this context."]).
 
 writeln_list(S, [First | Rest]) :-
     write(S, First),
@@ -269,6 +278,9 @@ constant_propagation(strlen(S), Len) :- string_length(S, Len).
 
 type_signature(strcat, [string, string], string, []).
 constant_propagation(strcat(S1, S2), S) :- string_concat(S1, S2, S).
+
+% type_signature(delete_string, [string, T], T, [T:any]).
+% constant_propagation(delete_string(_, X), X).
 
 inferTypes([], [], []).
 inferTypes([Arg | Args], [Type | Types], Assumptions) :-
@@ -766,7 +778,7 @@ branchesAssembly(Expr, Branches, Val, BranchesAsm) :-
 
 test(struct) :-
     destructAssemblies([(_::int64, '_')], Args, [], Asm),
-   (Args, Asm) =@= ([X], [destruct(X, ',', [_::int64, Y]), delete(Y)]).
+    (Args, Asm) =@= ([X], [destruct(X, ',', [_::int64, Y]), delete(Y)]).
 
 :- end_tests(destructAssemblies).
 
@@ -871,6 +883,11 @@ unlendVars([Key=StateIn | StatesIn], [Key=StateOut | StatesOut]) :-
         StateOut = StateIn),
     unlendVars(StatesIn, StatesOut).
 
+declareClassFunctions((ContextTuple => Decl), TypeContext) :-
+    tupleToList(ContextTuple, ContextAsList),
+    append(TypeContext, ContextAsList, FullContext),
+    declareClassFunctions(Decl, FullContext).
+
 declareClassFunctions((Func -> Type), TypeContext) :-
     Func =.. [Name | Args],
     assert(type_signature(Name, Args, Type, TypeContext)).
@@ -886,6 +903,9 @@ validateInstance((FirstDecl; RestDecl), Defs, T, C) :-
         ;
         throw(too_few_methods(T, C)).
 
+validateInstance((_ => Decl), Defs, T, C) :-
+    validateInstance(Decl, Defs, T, C).
+
 validateInstance((Func -> _Type), Defs, T, C) :-
     Defs = (Head := _Body) ->
         Func =.. [DeclName | DeclArgs],
@@ -899,6 +919,9 @@ validateInstance((Func -> _Type), Defs, T, C) :-
         ;
         throw(too_many_methods(T, C)).
 
+validateClassDecls((_ => Decl), C, T) :-
+    validateClassDecls(Decl, C, T).
+
 validateClassDecls((Decl1; Decl2), C, T) :-
     validateClassDecls(Decl1, C, T),
     validateClassDecls(Decl2, C, T).
@@ -911,12 +934,13 @@ validateClassDecls((Func -> _), C, T) :-
         ;
         true.
 
-compileMethods((Method1; Method2), TypeContext) :-
-    compileMethods(Method1, TypeContext),
-    compileMethods(Method2, TypeContext).
+compileMethods((Method1; Method2), Ctx) :-
+    compileMethods(Method1, Ctx),
+    compileMethods(Method2, Ctx).
 
-compileMethods((Func := Expr), TypeContext) :-
-    compileFunctionDefinition((Func := Expr), TypeContext).
+compileMethods((Func := Expr), Ctx) :-
+    append(Ctx, _, MethodCtx),
+    compileFunctionDefinition((Func := Expr), MethodCtx).
 
 tupleToList(Tuple, List) :-
     Tuple = (A,B) ->
@@ -1197,7 +1221,30 @@ selectAsmBranch([[DestructCmd | RestOfFirstBranch] | Branches], Branch) :-
         ;
         selectAsmBranch(Branches, Branch).
 
-% Prelude
+class_instance(_, any).
+
+validateDecls((Decl1; Decl2), Ctx) :-
+    validateDecls(Decl1, Ctx),
+    validateDecls(Decl2, Ctx).
+    
+validateDecls((MoreCtx => Decl), Ctx) :-
+    tupleToList(MoreCtx, MoreCtxAsList),
+    append(Ctx, MoreCtxAsList, FullCtx),
+    validateDecls(Decl, FullCtx).
+    
+validateDecls((Func -> Type), Ctx) :-
+    walk(Func, checkVarIsIn(Ctx), [], _),
+    walk(Type, checkVarIsIn(Ctx), [], _).
+
+checkVarIsIn(Ctx, Type::_, State, State) :-
+    member(Type::_ : _, Ctx) ->
+        true
+        ;
+        throw(type_var_not_declared(Type)).
+
+% ============= Prelude =============
+% :- compileStatement((class T : delete where { delete(X, T) -> X }),
+%     ['T'=T, 'X'=X]).
 :- compileStatement((union bool = true + false), []).
 :- compileStatement((union list(T) = [] + [T | list(T)]), ['T'=T]).
 :- compileStatement((union maybe(T) = just(T) + none), ['T'=T]).
@@ -1214,3 +1261,9 @@ selectAsmBranch([[DestructCmd | RestOfFirstBranch] | Branches], Branch) :-
     ['A'=A, 'B'=B]).
 :- compileStatement((instance float64 : minus where { A-B := float64_minus(A, B) }),
     ['A'=A, 'B'=B]).
+% :- compileStatement((instance int64 : delete where { delete(X, N) := X }),
+%     ['X'=X, 'N'=N]).
+% :- compileStatement((instance float64 : delete where { delete(X, N) := X }),
+%     ['X'=X, 'N'=N]).
+% :- compileStatement((instance string : delete where 
+%     { delete(X, S) := delete_string(S, X) }), ['X'=X, 'S'=S]).

@@ -239,6 +239,56 @@ declare foobar(T) -> T.
 foobar(X) := foo(bar(X)).
 ```
 
+### The `any` Class
+
+Sometimes we want a function to apply to any type whatsoever. Such a function cannot do much with the object (i.e., cannot call methods on it or destruct it to see its components), but it can move it around. It can return it, or forward it to other functions that can work on any type.
+
+To allow functions to abstract over any type, the `any` special class can be used. `any` has no methods, and every type is automatically an instance of it.
+
+In the following example we use `any` to define an all-type identity function. It compiles successfully:
+
+```prolog
+T : any =>
+declare identity(T) -> T.
+
+identity(X) := X.
+
+assert identity(3) == 3.
+assert identity(3.0) == 3.0.
+assert identity("hello") == "hello".
+```
+
+### Polymorphic Methods
+
+Like regular functions, we sometimes wish type-class methods to be polymorphic as well, with regard to types other than the type-class instance.
+
+Consider a class `foo` with method `foo` that takes an instance of the class and some other object (of `any` type), and returns a tuple, consisting of an instance of the class and the other type. The object of the other type must be the same as the object we received (we do not know anything on that type and therefore cannot apply anything on its value).
+
+The following compiles successfully:
+
+```prolog
+class F : foo where {
+    T : any =>
+    foo(F, T) -> F, T
+}.
+
+instance int64 : foo  where {
+    foo(N, X) := N+1, X
+}.
+```
+
+Type variables used in polymorphic methods need to be declared, as in the above example. Failing to do so results in a compilation error.
+
+```prolog
+class F : foo where {
+    foo(F, T) -> F, T
+}.
+```
+
+```error
+Type variable T has not been declared in this context.
+```
+
 ## Parametric Classes
 
 Type classes can take type parameters. With these parameters, the type class represents a relation between types. For example, in the [sequence example below](#sequence-example) the term `S : seq(T)` represents a relation between the sequence type `S` and the type of the elements it contains, `T`. 
@@ -252,6 +302,7 @@ We implement two instances. `list(T)` provides a sequence of the elements in the
 The following example compiles successfully:
 
 ```prolog
+T : any =>
 class S : seq(T) where {
     next(S) -> maybe((T, S))
 }.
@@ -292,6 +343,18 @@ assert case nth([1, 2, 3, 4], 2) of {
 }.
 ```
 
+Note that we declared type `T` as `any` as an assumption for class `seq(T)`. Had we omitted this declaration, we would have received an error message:
+
+```prolog
+class S : seq(T) where {
+    next(S) -> maybe((T, S))
+}.
+```
+
+```error
+Type variable T has not been declared in this context.
+```
+
 ### Generality of Parameter Types
 
 In the above example, `nth` is a polymorphic function which takes a sequence and an index and returns the nth element in the sequence if such exists (or `none` if such does not exist).
@@ -299,6 +362,7 @@ In the above example, `nth` is a polymorphic function which takes a sequence and
 Note that in `nth`'s declaration, `T` appears as a free variable, in the sense that we do not constrain it to any type-class (unlike `S`, which is bound to `seq(T)`). Thus, the definition of such a function cannot assume anything on type `T`. For example, adding 1 to the returned value will not compile:
 
 ```prolog
+T : any =>
 class S : seq(T) where {
     next(S) -> maybe((T, S))
 }.
