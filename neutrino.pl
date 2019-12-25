@@ -23,6 +23,9 @@
 :- dynamic is_struct/1.
 :- dynamic function_impl/5.
 
+:- discontiguous constant_propagation/2.
+:- discontiguous type_signature/4.
+
 !Goal :- Goal, !.
 !Goal :- throw(unsatisfied(Goal)).
 
@@ -238,12 +241,25 @@ writeln_list(S, []) :-
     writeln(S, "").
 
 type_signature(==, [T, T], bool, []).
+constant_propagation(A==B, V) :- A == B -> V = true; V = false.
+
 type_signature(int64_plus, [int64, int64], int64, []).
+constant_propagation(int64_plus(A, B), V) :- V is A+B.
+
 type_signature(float64_plus, [float64, float64], float64, []).
+constant_propagation(float64_plus(A, B), V) :- V is A+B.
+
 type_signature(int64_minus, [int64, int64], int64, []).
+constant_propagation(int64_minus(A, B), V) :- V is A-B.
+
 type_signature(float64_minus, [float64, float64], float64, []).
+constant_propagation(float64_minus(A, B), V) :- V is A-B.
+
 type_signature(strlen, [&string], int64, []).
+constant_propagation(strlen(S), Len) :- string_length(S, Len).
+
 type_signature(strcat, [string, string], string, []).
+constant_propagation(strcat(S1, S2), S) :- str_cat(S1, S2, S3).
 
 inferTypes([], [], []).
 inferTypes([Arg | Args], [Type | Types], Assumptions) :-
@@ -963,8 +979,7 @@ test(unnameVars) :-
                foo('A'::int64, C::string)+
                foo(C::string, _) + 
                [FakeType:seq(FakeType)], Unnamed),
-    writeln(Unnamed),
-    Unnamed =@= foo(A, B)+
+    Unnamed =@= foo(A, _B)+
                 foo(A, C)+
                 foo(C, _)+
                 [T:seq(T)].
@@ -1017,6 +1032,152 @@ replaceInTerms([], _, []).
 replaceInTerms([Term | Terms], Pred, [RepTerm | RepTerms]) :-
     replaceInTerm(Term, Pred, RepTerm),
     replaceInTerms(Terms, Pred, RepTerms).
+
+:- begin_tests(specialize).
+
+% The specialize predicate evaluates one list of assembly instructions into another,
+% "simpler" list, possibly unifying variables in the process.
+
+% For example, the literal command is specialized by removing it and unifying the
+% result variable with the literal value.
+test(literal) :-
+    specialize([literal(42, FortyTwo),
+                literal("hello", Hello)], Asm),
+    FortyTwo == 42,
+    Hello == "hello",
+    Asm == [].
+
+% Construct commands construct compound terms based on their arguments.
+test(construct) :-
+    specialize([construct(foo, [1, 2], X),
+                construct(bar, [X, 3], Y)], Asm),
+    Y == bar(foo(1, 2), 3),
+    Asm == [].
+
+% Destruct works by destructing compound terms into their components.
+test(destruct) :-
+    specialize([destruct(bar(foo(1, 2), 3), bar, [Foo, Three]),
+                destruct(Foo, foo, [One, Two])], Asm),
+    One == 1,
+    Two == 2,
+    Three == 3,
+    Asm == [].
+
+% destruct_ref works the same way.
+test(destruct_ref) :-
+    specialize([destruct_ref(bar(foo(1, 2), 3), bar, [Foo, Three]),
+                destruct_ref(Foo, foo, [One, Two])], Asm),
+    One == 1,
+    Two == 2,
+    Three == 3,
+    Asm == [].
+
+% If given a free variable, destruct remains unevaluated, but allows evaluation continue.
+test(destruct_free_var) :-
+    specialize([destruct(X, foo, [Y, Z]),
+                literal(3, Three)], Asm),
+    Three = 3,
+    Asm = [destruct(X, foo, [Y, Z])].
+
+% Deletes are simply ignored (and removed).
+test(destruct_free_var) :-
+    specialize([delete(_),
+                delete(_)], Asm),
+    Asm = [].
+
+% Calls to implemented functions are replaced with their bodies.
+test(call_implemented) :-
+    specialize([call(+, [A, B], [int64:plus], C),
+                call(+, [C, D], [int64:plus], R)], Asm),
+    Asm == [call(int64_plus, [A, B], [], C),
+            call(int64_plus, [C, D], [], R)].
+
+% When calling a built-in function that has a Prolog implementation with all arguments
+% ground (no free variables), the Prolog implementation is used to evaluate the result (constant propagation)
+test(constant_propagation) :-
+    specialize([call(+, [1, 2], [int64:plus], X),
+                call(+, [X, 3], [int64:plus], R)], Asm),
+    Asm == [],
+    R == 6.
+
+% A case command is not specialized if the expression it destructs is a free variable.
+% In such a case, the command is left untouched, but further commands are specialized.
+test(case_with_free_var) :-
+    specialize([
+        case(X, [
+            [destruct(X, foo, [A, B]),
+            construct(bar, [B, A], Res)],
+            [destruct(X, bar, [X, Y]),
+            construct(foo, [Y, X], Res)]]),
+        literal(2, Two)], Asm),
+    Two == 2,
+    Asm == [case(X, [
+            [destruct(X, foo, [A, B]),
+            construct(bar, [B, A], Res)],
+            [destruct(X, bar, [X, Y]),
+            construct(foo, [Y, X], Res)]])].
+
+% If the expression is not a free variable, a single branch is chosen based on the value
+% of the expression (the first command in the branch is expected to destruct the 
+% expression). That branch replaces the case command and is specialized.
+test(case_with_concrete_expr) :-
+    specialize([
+        case(bar(X1, Y1), [
+            [destruct(bar(X1, Y1), foo, [A, B]),
+            construct(bar, [B, A], Res)],
+            [destruct(bar(X1, Y1), bar, [X, Y]),
+            construct(foo, [Y, X], Res)]]),
+        literal(2, Two)], Asm),
+    Two == 2,
+    Res == foo(Y1, X1),
+    Asm == [].
+
+
+:- end_tests(specialize).
+
+specialize([], []).
+specialize([literal(Val, Val) | AsmIn], AsmOut) :-
+    specialize(AsmIn, AsmOut).
+specialize([construct(Name, Args, Term) | AsmIn], AsmOut) :-
+    Term =.. [Name | Args],
+    specialize(AsmIn, AsmOut).
+specialize([destruct(Term, Name, Args) | AsmIn], AsmOut) :-
+    var(Term) ->
+        AsmOut = [destruct(Term, Name, Args) | AsmMid],
+        specialize(AsmIn, AsmMid)
+        ;
+        Term =.. [Name | Args],
+        specialize(AsmIn, AsmOut).
+specialize([destruct_ref(Term, Name, Args) | AsmIn], AsmOut) :-
+    specialize([destruct(Term, Name, Args) | AsmIn], AsmOut).
+specialize([delete(_) | AsmIn], AsmOut) :-
+    specialize(AsmIn, AsmOut).
+specialize([call(Name, Args, TypeGuard, Result) | AsmIn], AsmOut) :-
+    function_impl(Name, TypeGuard, Args, Body, Result) ->
+        append(Body, AsmIn, Asm1),
+        specialize(Asm1, AsmOut)
+        ;
+        ground(Args),
+        Func =.. [Name | Args],
+        constant_propagation(Func, Result) ->
+            specialize(AsmIn, AsmOut)
+            ;
+            AsmOut = [call(Name, Args, TypeGuard, Result) | Asm2],
+            specialize(AsmIn, Asm2).
+specialize([case(Expr, Branches) | AsmIn], AsmOut) :-
+    var(Expr) ->
+        AsmOut = [case(Expr, Branches) | Asm1],
+        specialize(AsmIn, Asm1)
+        ;
+        selectAsmBranch(Branches, Branch),
+        append(Branch, AsmIn, Asm2),
+        specialize(Asm2, AsmOut).
+
+selectAsmBranch([[DestructCmd | RestOfFirstBranch] | Branches], Branch) :-
+    specialize([DestructCmd], []) ->
+        Branch = RestOfFirstBranch
+        ;
+        selectAsmBranch(Branches, Branch).
 
 % Prelude
 :- compileStatement((union bool = true + false), []).
