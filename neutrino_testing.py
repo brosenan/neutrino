@@ -3,6 +3,10 @@ import re
 import subprocess
 import sys
 
+RED = '\033[91m'
+GREEN = '\033[32m'
+NO_COLOR = '\033[0m'
+
 def extract_code(md):
     state = "NORMAL"
     code = ""
@@ -35,8 +39,8 @@ class SuccessTest:
         result = subprocess.run(["%s/swipl" % os.getcwd(), "-f", "neutrino.pl", 
                                  "-t", "run('%s')" % self.test_file])
         if result.returncode != 0:
-            print("### Compilation should have succeeded, but failed with status %d.\nCode: %s\nOutput: %s"
-                  % (result.returncode, self.code, result.stderr))
+            print("%s###%s Compilation should have succeeded, but failed with status %d.\nCode: %s\nOutput: %s"
+                  % (RED, NO_COLOR, result.returncode, self.code, result.stderr))
             return False
         else:
             return True
@@ -53,11 +57,12 @@ class FailureTest:
         result = subprocess.run(["%s/swipl" % os.getcwd(), "-f", "neutrino.pl", 
                                  "-t", "run('%s')" % self.test_file], stderr=subprocess.PIPE)
         if result.returncode == 0:
-            print("### Expected compilation to fail but it succeeded.\nCode: %s" % self.code)
+            print("%s###%s Expected compilation to fail but it succeeded.\nCode: %s" % 
+                (RED, NO_COLOR, self.code))
             return False
         elif self.error not in str(result.stderr):
-            print("### Compilation error should contain the string '%s' but does not.\nCode: %s\nOutput: %s"
-                  % (self.error, self.code, result.stderr))
+            print("%s###%s Compilation error should contain the string '%s' but does not.\nCode: %s\nOutput: %s"
+                  % (RED, NO_COLOR, self.error, self.code, result.stderr))
             return False
         else:
             return True
@@ -88,18 +93,25 @@ def parse(spec_file_name):
             state = "SUCC"
 
 if __name__ == "__main__":
-    tests = [test for filename in sys.argv[1:] for test in parse(filename)]
+    tests = []
+    for filename in sys.argv[1:]:
+        for test in parse(filename):
+            test.module = filename
+            tests.append(test)
     tests.reverse()
     passed = 0
     failed = 0
+    failed_modules = set()
     for test in tests:
         print(".")
         if test.run():
             passed += 1
         else:
             failed += 1
+            failed_modules.add(test.module)
     if failed:
-        print("### %d tests failed (but %s passed)." % (failed, passed))
+        print("### %d tests %sfailed%s in modules %s (but %s passed)."
+            % (failed, RED, NO_COLOR, failed_modules, passed))
         sys.exit(1)
     else:
-        print("### %s tests passed." % passed)
+        print("### %d tests %spassed%s." % (passed, GREEN, NO_COLOR))

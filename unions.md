@@ -230,8 +230,8 @@ To fix this, use `_` to replace unused variables. The following compiles success
 union foobar = foo(string) + bar(string).
 
 assert case foo("bar") of {
-    foo(S) => S == "foo";
-    bar(_) => true
+    foo(S) => S == "bar";
+    bar(_) => false
 }.
 ```
 

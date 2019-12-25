@@ -6,7 +6,15 @@ Following is the simplest, no-op Neutrino program, which should compile successf
 assert true.
 ```
 
-The `assert` statement takes a Boolean expression and tests that it evaluates to `true`. In this case, this holds trivially.
+The `assert` statement takes a Boolean expression and tests that it evaluates to `true`. In this case, this holds trivially. If it doesn't, we get a compilation (or test-time) error:
+
+```prolog
+assert false.
+```
+
+```error
+Assertion has failed. Expected true, got false.
+```
 
 Obviously, using an expression that is not Boolean will result in a compilation error.
 

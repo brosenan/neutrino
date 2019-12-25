@@ -60,8 +60,14 @@ compileStatement((assert Expr), VNs) :-
     inferType(Expr, Type, Assumptions),
     matchType(Type, bool, Expr),
     checkAssumptions(Assumptions),
-    assembly(Expr, Result, [], Asm),
-    linearityCheck(Asm, Result, [], _).
+    once(assembly(Expr, Result, [], Asm)),
+    linearityCheck(Asm, Result, [], _),
+    unnameVars((Asm, Result), (UnAsm, UnResult)),
+    specialize(UnAsm, _),
+    \+(UnResult == true) ->
+        throw(assertion_failed(UnResult))
+        ;
+        true.
 
 compileStatement((Func := Body), VNs) :-
     nameVars(VNs),
@@ -147,7 +153,7 @@ compileFunctionDefinition((Func := Body), TypeContext) :-
     !destructAssemblies(Args, DestArgs, BodyAsm, Asm),
     !stateMapList(introduceVars, DestArgs, [], VarState1),
     !linearityCheck(Asm, Result, VarState1, _),
-    unnameVars((TypeContext, Args, Asm, Result), 
+    unnameVars((TypeContext, DestArgs, Asm, Result), 
                (UnTypeContext, UnArgs, UnAsm, UnResult)),
     assert(function_impl(Name, UnTypeContext, UnArgs, UnAsm, UnResult)).
 
@@ -232,6 +238,9 @@ formatError(undefined_expression(Functor),
     ["Undefined expression ", Functor, "."]).
 formatError(lend_and_consume(Name),
     ["Attempt to both consume and lend variable ", Name, " in a single step."]).
+formatError(assertion_failed(Result),
+    ["Assertion has failed. Expected true, got ", Result, "."]).
+
 
 writeln_list(S, [First | Rest]) :-
     write(S, First),
@@ -259,7 +268,7 @@ type_signature(strlen, [&string], int64, []).
 constant_propagation(strlen(S), Len) :- string_length(S, Len).
 
 type_signature(strcat, [string, string], string, []).
-constant_propagation(strcat(S1, S2), S) :- str_cat(S1, S2, S3).
+constant_propagation(strcat(S1, S2), S) :- string_concat(S1, S2, S).
 
 inferTypes([], [], []).
 inferTypes([Arg | Args], [Type | Types], Assumptions) :-
@@ -702,8 +711,9 @@ test(case_ref) :-
                        construct(false, [], V::bool)]])]).
 :- end_tests(assembly).
 
-assemblySpecial(Expr, Val, Asm, [literal(Expr, Val) | Asm]) :-
-    isSimpleExpr(Expr).
+assemblySpecial(Expr, Val::Type, Asm, [literal(Expr, Val::Type) | Asm]) :-
+    isSimpleExpr(Expr),
+    inferType(Expr, Type, _).
 
 assemblySpecial(Name::Type, Name::Type, Asm, Asm).
 assemblySpecial(&Name::Type, &Name::Type, Asm, Asm).
@@ -751,6 +761,14 @@ branchesAssembly(Expr, Branches, Val, BranchesAsm) :-
         assembly(Result, Val, [], ResultAsm),
         destructAssemblies(Args, DestArgs, ResultAsm, DestAsm),
         BranchesAsm = [[destruct(Expr, Name, DestArgs) | DestAsm]].
+
+:- begin_tests(destructAssemblies).
+
+test(struct) :-
+    destructAssemblies([(_::int64, '_')], Args, [], Asm),
+   (Args, Asm) =@= ([X], [destruct(X, ',', [_::int64, Y]), delete(Y)]).
+
+:- end_tests(destructAssemblies).
 
 destructAssemblies([], [], Asm, Asm).
 
