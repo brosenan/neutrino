@@ -21,6 +21,7 @@
 :- dynamic class_instance/2.
 :- dynamic fake_type/1.
 :- dynamic is_struct/1.
+:- dynamic function_impl/5.
 
 !Goal :- Goal, !.
 !Goal :- throw(unsatisfied(Goal)).
@@ -137,11 +138,15 @@ compileFunctionDefinition((Func := Body), TypeContext) :-
         checkAssumptions(ArgAssumptions)
         ;
         validateArgTypes(Args),
-        assert(type_signature(Name, ArgTypes, Type, []))),
+        TypeContext = [],
+        assert(type_signature(Name, ArgTypes, Type, TypeContext))),
     !assembly(Body, Result, [], BodyAsm),
     !destructAssemblies(Args, DestArgs, BodyAsm, Asm),
     !stateMapList(introduceVars, DestArgs, [], VarState1),
-    !linearityCheck(Asm, Result, VarState1, _).
+    !linearityCheck(Asm, Result, VarState1, _),
+    unnameVars((TypeContext, Args, Asm, Result), 
+               (UnTypeContext, UnArgs, UnAsm, UnResult)),
+    assert(function_impl(Name, UnTypeContext, UnArgs, UnAsm, UnResult)).
 
 
 inferType(_::T, T, []).
@@ -946,6 +951,72 @@ transformBranchForRef([Cmd | Cmds], CmdsRef) :-
 
 transformCommandForRef(destruct(Expr, Name, Args), destruct_ref(Expr, Name, Args)).
 
+:- begin_tests(unnameVars).
+
+% unnameVars reverses the operation of nameVars. While the latter works on a list of
+% variable names and unifies the variables with Name::_, unnameVars walks a term,
+% identifies all elements of the form Name::_, assigns a free variable to each, and
+% then replaces each such element with its corresponding variable.
+test(unnameVars) :-
+    assignFakeTypes([FakeType]),
+    unnameVars(foo('A'::int64, 'B'::_)+
+               foo('A'::int64, C::string)+
+               foo(C::string, _) + 
+               [FakeType:seq(FakeType)], Unnamed),
+    writeln(Unnamed),
+    Unnamed =@= foo(A, B)+
+                foo(A, C)+
+                foo(C, _)+
+                [T:seq(T)].
+
+:- end_tests(unnameVars).
+
+unnameVars(Term, Unnamed) :-
+    walk(Term, findNames, [], Names),
+    replaceInTerm(Term, replaceNamed(Names), Unnamed).
+
+findNames(Term, StateIn, StateOut) :-
+    Term = Name::_ ->
+        (atom(Name),  \+member(Name=_, StateIn) ->
+            StateOut = [Name=_ | StateIn]
+            ;
+            StateOut = StateIn)
+        ;
+        fake_type(Term) ->
+            (\+member(Term=_, StateIn) ->
+                StateOut = [Term=_ | StateIn]
+                ;
+                StateOut = StateIn)
+            ;
+            fail.
+
+replaceNamed(Names, Term, Unnamed) :-
+    Term = Name::_ ->
+        (var(Name) ->
+            Unnamed = Name
+            ;
+            member(Name=Unnamed, Names))
+        ;
+        fake_type(Term) ->
+            member(Term=Unnamed, Names)
+            ;
+            fail.
+
+replaceInTerm(Term, Pred, Replaced) :-
+    call(Pred, Term, Replaced) ->
+        true
+        ;
+        my_callable(Term) ->
+            Term =.. [Name | Terms],
+            replaceInTerms(Terms, Pred, ReplacedTerms),
+            Replaced =.. [Name | ReplacedTerms]
+            ;
+            Replaced = Term.
+
+replaceInTerms([], _, []).
+replaceInTerms([Term | Terms], Pred, [RepTerm | RepTerms]) :-
+    replaceInTerm(Term, Pred, RepTerm),
+    replaceInTerms(Terms, Pred, RepTerms).
 
 % Prelude
 :- compileStatement((union bool = true + false), []).
