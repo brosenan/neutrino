@@ -94,3 +94,5 @@ Neutrino is work in progress. Even when it will be code-complete, I don't expect
 * [Struct Types](structs.md)
 * [References](refs.md)
 * [Type Classes](type-classes.md)
+* [Lambdas](lambdas.md)
+
