@@ -144,22 +144,23 @@ compileStatement((class T:C where {Decls}), VNs, Context) :-
 
 compileFunctionDefinition((Func := Body), TypeContext) :-
     walk(Func, replaceSingletosWithDelete, [], _),
+    replaceInTerm(Body, syntacticReplacement, BodyAfterMacros),
     Func =.. [Name | Args],
-    inferType(Body, Type, BodyAssumptions),
+    inferType(BodyAfterMacros, Type, BodyAssumptions),
     inferTypes(Args, ArgTypes, ArgAssumptions),
     validateLValues(Args, ArgTypes),
     sameLength(ArgTypes, SigArgTypes),
     (type_signature(Name, SigArgTypes, SigType, TypeContext) ->
         !saturateTypes(TypeContext),
         matchTypes(ArgTypes, SigArgTypes, Args),
-        matchType(Type, SigType, Body),
+        matchType(Type, SigType, BodyAfterMacros),
         checkAssumptions(BodyAssumptions),
         checkAssumptions(ArgAssumptions)
         ;
         validateArgTypes(Args),
         TypeContext = [],
         assert(type_signature(Name, ArgTypes, Type, TypeContext))),
-    !assembly(Body, Result, [], BodyAsm),
+    !assembly(BodyAfterMacros, Result, [], BodyAsm),
     !destructAssemblies(Args, DestArgs, BodyAsm, Asm),
     walk(Asm, enumerateVars, 0, _),
     !stateMapList(introduceVars, DestArgs, [], VarState1),
@@ -1013,7 +1014,7 @@ sumToList(Sum, ListIn, ListOut) :-
         ListOut = [Sum | ListIn].
 
 my_callable(X) :- callable(X).
-my_callable([]).
+my_callable(X) :- X == [].
 
 modifyAll([], _, []).
 modifyAll([A | As], Modifier, [B | Bs]) :-
@@ -1307,6 +1308,17 @@ enumerateVars(Var::_, N, N1) :-
     N1 is N + 1,
     atom_number(Num, N),
     atom_concat('v', Num, Var).
+
+syntacticReplacement(TermIn, TermOut) :-
+    nonvar(TermIn),
+    syntacticMacro(TermIn, TermOut).
+
+syntacticMacro(
+    if(Cond, Then, Else),
+    (case Cond of {
+        true => Then;
+        false => Else
+    })).
 
 % ============= Prelude =============
 :- compileStatement((class T : delete where { X : any => X del T -> X }),

@@ -235,3 +235,48 @@ assert case foo("bar") of {
 }.
 ```
 
+## Built-in Union Types
+
+Neutrino defines a few built-in union types, including `bool`, `list`, and `maybe`. The following code demonstrates their use, and compiles successfully:
+
+```prolog
+% A maybe type either contains just a value, or none.
+increment_or_zero(MaybeN) := case MaybeN of {
+    just(N) => N+1;
+    none => 0
+}.
+
+assert increment_or_zero(just(3)) == 4.
+assert increment_or_zero(none) == 0.
+
+% A list consists of either an empty list ([]) or a non-empty list ([Head | Tail]).
+declare list_sum(list(int64)) -> int64.
+list_sum(L) := case L of {
+    [] => 0;
+    [Head | Tail] => Head + list_sum(Tail)
+}.
+
+assert list_sum([1, 2, 3]) == 6.
+
+% bool can either be true or false.
+delta(N) := case (N == 0) of {
+    true => 1;
+    false => 0
+}.
+
+assert delta(0) == 1.
+assert delta(42) == 0.
+```
+
+Note: See [here](https://en.wikipedia.org/wiki/Dirac_delta_function) for an explanation on the delta function we implemented in the above example.
+
+As seen in the last example, a case expression can be used for conditionals. However, as conditionals are such a common case, Neutrino has an `if` expression as a convenience.
+
+The following example implements the delta function from above, using the `if` expression. It compiles successfully:
+
+```prolog
+delta(N) := if(N == 0, 1, 0).
+
+assert delta(0) == 1.
+assert delta(42) == 0.
+```
