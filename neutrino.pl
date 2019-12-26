@@ -6,6 +6,7 @@
 :- op(1050, fx, struct).
 :- op(1050, fx, class).
 :- op(1050, fx, instance).
+:- op(1020, xfx, del).
 :- op(900, xfx, where).
 :- op(700, fx, case).
 :- op(600, xfx, of).
@@ -84,6 +85,7 @@ compileStatement((union Union = Options), VNs) :-
     assertOptionSignatures(Options, Union),
     sumToList(Options, OptionList),
     assert(union_type(Union, OptionList)),
+    !compileUnionDeleteInstance(Union, OptionList, VNs),
     nameVars(VNs),
     verifyTypeVariables(Args),
     walk(Options, verifyVarIsType(Name), [], _),
@@ -97,6 +99,7 @@ compileStatement((struct Type = Constructor), VNs) :-
     assert(is_constructor(ConsName, ConsArity)),
     Type =.. [Name | Args],
     validateVars(Args),
+    !compileStructDeleteInstance(Type, Constructor),
     nameVars(VNs),
     verifyTypeVariables(Args),
     walk(Constructor, verifyVarIsType(Name), [], _),
@@ -279,8 +282,8 @@ constant_propagation(strlen(S), Len) :- string_length(S, Len).
 type_signature(strcat, [string, string], string, []).
 constant_propagation(strcat(S1, S2), S) :- string_concat(S1, S2, S).
 
-% type_signature(delete_string, [string, T], T, [T:any]).
-% constant_propagation(delete_string(_, X), X).
+type_signature(delete_string, [string, T], T, [T:any]).
+constant_propagation(delete_string(_, X), X).
 
 inferTypes([], [], []).
 inferTypes([Arg | Args], [Type | Types], Assumptions) :-
@@ -976,12 +979,13 @@ checkAssumptions([T:C | Rest]) :-
         throw(type_not_instance(T, C)).
 
 sumToList(Sum, List) :-
+    sumToList(Sum, [], List).
+
+sumToList(Sum, ListIn, ListOut) :-
     Sum = A+B ->
-        sumToList(A, L1),
-        sumToList(B, L2),
-        append(L1, L2, List)
+        sumToList(A, [B | ListIn], ListOut)
         ;
-        List = [Sum].
+        ListOut = [Sum | ListIn].
 
 my_callable(X) :- callable(X).
 my_callable([]).
@@ -1242,9 +1246,51 @@ checkVarIsIn(Ctx, Type::_, State, State) :-
         ;
         throw(type_var_not_declared(Type)).
 
+compileStructDeleteInstance(Type, Constructor) :-
+    functor(Constructor, Name, Arity),
+    length(Underscores, Arity),
+    fillWithUnderscores(Underscores),
+    ConsWithUnderscores =.. [Name | Underscores],
+    copy_term(Type, TypeCopy),
+    compileStatement((instance TypeCopy : delete where {
+        X del ConsWithUnderscores := X
+    }), ['X'=X]).
+
+fillWithUnderscores([]).
+fillWithUnderscores(['_' | L]) :-
+    fillWithUnderscores(L).
+
+compileUnionDeleteInstance(Union, OptionList, VNs) :-
+    copy_term(Union, Union1),
+    deleteUnionBranches(OptionList, X, Branches),
+    compileStatement((instance Union1 : delete where {
+        X del U := case U of {
+            Branches
+        }
+    }), ['x'=X, 'u'=U | VNs]).
+
+deleteUnionBranches([Op1, Op2 | Options], X, (Branch1; Branches)) :-
+    deleteUnionBranches([Op1], X, Branch1),
+    deleteUnionBranches([Op2 | Options], X, Branches).
+
+deleteUnionBranches([Op], X, Branch) :-
+    functor(Op, Name, Arity),
+    length(Underscores, Arity),
+    fillWithUnderscores(Underscores),
+    LHS =.. [Name | Underscores],
+    Branch = (LHS => X).
+
+:- begin_tests(sum_to_list).
+
+test(sumToList) :-
+    sumToList(1+2+3+4+5, X),
+    X == [1, 2, 3, 4, 5].
+
+:- end_tests(sum_to_list).
+
 % ============= Prelude =============
-% :- compileStatement((class T : delete where { delete(X, T) -> X }),
-%     ['T'=T, 'X'=X]).
+:- compileStatement((class T : delete where { X : any => X del T -> X }),
+    ['T'=T, 'X'=X]).
 :- compileStatement((union bool = true + false), []).
 :- compileStatement((union list(T) = [] + [T | list(T)]), ['T'=T]).
 :- compileStatement((union maybe(T) = just(T) + none), ['T'=T]).
@@ -1261,9 +1307,9 @@ checkVarIsIn(Ctx, Type::_, State, State) :-
     ['A'=A, 'B'=B]).
 :- compileStatement((instance float64 : minus where { A-B := float64_minus(A, B) }),
     ['A'=A, 'B'=B]).
-% :- compileStatement((instance int64 : delete where { delete(X, N) := X }),
-%     ['X'=X, 'N'=N]).
-% :- compileStatement((instance float64 : delete where { delete(X, N) := X }),
-%     ['X'=X, 'N'=N]).
-% :- compileStatement((instance string : delete where 
-%     { delete(X, S) := delete_string(S, X) }), ['X'=X, 'S'=S]).
+:- compileStatement((instance int64 : delete where { X del N := X }),
+    ['X'=X, 'N'=N]).
+:- compileStatement((instance float64 : delete where { X del N := X }),
+    ['X'=X, 'N'=N]).
+:- compileStatement((instance string : delete where 
+    { X del S := delete_string(S, X) }), ['X'=X, 'S'=S]).

@@ -200,7 +200,7 @@ greet_type(Greeting, Obj) := Greeting + ", " + Obj.
 ```
 
 ```error
-Expression Obj::string expected to be unknown_type1, inferred: string.
+Expression Obj::string expected to be unknown_type12, inferred: string.
 ```
 
 When calling a polymorphic function, the compiler checks the assumptions hold for the given types. For example, if we call `greet_type` on a `float64` without first defining `float64` as an instance of `named_type`, we get a compilation error.
@@ -383,7 +383,7 @@ nth(Seq, Index) := case (Index == 0) of {
 ```
 
 ```error
-Type mismatch. Expression case (Index::int64==0)of{true=>case next(Seq::unknown_type1)of{just((First::int64,_))=>just(First::int64+1);none=>none};false=>case next(Seq::unknown_type1)of{just((_,Next::unknown_type1))=>nth(Next::unknown_type1,Index::int64-1);none=>none}} expected to be maybe(unknown_type2), inferred: maybe(int64).
+Expression case (Index::int64==0)of{true=>case next(Seq::unknown_type12)of{just((First::int64,_))=>just(First::int64+1);none=>none};false=>case next(Seq::unknown_type12)of{just((_,Next::unknown_type12))=>nth(Next::unknown_type12,Index::int64-1);none=>none}} expected to be maybe(unknown_type13), inferred: maybe(int64).
 ```
 
 ## Polymorphic Instance Definitions
@@ -415,4 +415,18 @@ instance int64 : named_type where {
 
 assert type_name([1, 2, 3]) == "list(int64)".
 assert type_name([]) == "nil".
+```
+
+## Automatic Instances
+
+Neutrino automatically defines every struct and union type as instances of the `delete` class.
+
+For example, the following compiles successfully:
+
+```prolog
+struct foo(T) = foo(T, T).
+union bar(T) = bar1(T, int64) + bar2(string, T) + bar3.
+
+assert (2 del foo("hello", "world")) == 2.
+assert (3.14 del bar1("hello", 42)) == 3.14.
 ```
