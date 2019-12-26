@@ -161,12 +161,12 @@ compileFunctionDefinition((Func := Body), TypeContext) :-
         assert(type_signature(Name, ArgTypes, Type, TypeContext))),
     !assembly(Body, Result, [], BodyAsm),
     !destructAssemblies(Args, DestArgs, BodyAsm, Asm),
+    walk(Asm, enumerateVars, 0, _),
     !stateMapList(introduceVars, DestArgs, [], VarState1),
     !linearityCheck(Asm, Result, VarState1, _),
     unnameVars((TypeContext, DestArgs, Asm, Result), 
                (UnTypeContext, UnArgs, UnAsm, UnResult)),
     assert(function_impl(Name, UnTypeContext, UnArgs, UnAsm, UnResult)).
-
 
 inferType(_::T, T, []).
 inferType(N, int64, []) :- integer(N).
@@ -695,15 +695,16 @@ test(case) :-
         bar1('_') => false
     }), Val, [], Asm),
     (Val, Asm) =@= (V::bool,
-                    [literal(42, FourtyTwo::int64),
-                     construct(foo1, [FourtyTwo::int64], X::foobar1),
+                    [literal(42,FourtyTwo::int64),
+                     construct(foo1,[FourtyTwo::int64],X::foobar1),
                      case(X::foobar1,
-                        [[destruct(X::foobar1, foo1, ['A'::int64]),
-                          literal(1, One::int64),
-                          call(==, ['A'::int64, One::int64], [], V::bool)],
-                         [destruct(X::foobar1, bar1, [Y]),
-                          delete(Y),
-                          construct(false, [], V::bool)]])]).
+                        [[destruct(X::foobar1,foo1,['A'::int64]),
+                         literal(1,One::int64),
+                         call(==,['A'::int64,One::int64],[],V::bool)],
+                       [destruct(X::foobar1,bar1,[Y::YType]),
+                        literal(0,Dummy::int64),
+                        call(del,[Dummy::int64,Y::YType],[YType:delete,int64:any],_),
+                        construct(false,[],V::bool)]])]).
 
 
 % Case expression over reference types differ from normal case expressions
@@ -734,13 +735,12 @@ assemblySpecial(Name::Type, Name::Type, Asm, Asm).
 assemblySpecial(&Name::Type, &Name::Type, Asm, Asm).
 
 assemblySpecial((case Expr of {Branches}), Val, AsmIn, AsmOut) :-
-    branchesAssembly(ExprVal, Branches, Val, BranchesAsm),
+    branchesAssembly(ExprVal, Branches, Val, destructAssembly, BranchesAsm),
     assembly(Expr, ExprVal, [case(ExprVal, BranchesAsm) | AsmIn], AsmOut).
 
 assemblySpecial((case Expr of & {Branches}), Val, AsmIn, AsmOut) :-
-    branchesAssembly(ExprVal, Branches, Val, BranchesAsm),
-    transformBranchesForRef(BranchesAsm, RefBranchesAsm),
-    assembly(Expr, ExprVal, [case(ExprVal, RefBranchesAsm) | AsmIn], AsmOut).
+    branchesAssembly(ExprVal, Branches, Val, destructRefAssembly, BranchesAsm),
+    assembly(Expr, ExprVal, [case(ExprVal, BranchesAsm) | AsmIn], AsmOut).
 
 assembly(Expr, Val, AsmIn, AsmOut) :-
     assemblySpecial(Expr, Val, AsmIn, AsmOut) ->
@@ -765,23 +765,24 @@ assemblies([Expr | Exprs], [Val | Vals], AsmIn, AsmOut) :-
 isSimpleExpr(Expr) :- number(Expr).
 isSimpleExpr(Expr) :- string(Expr).
 
-branchesAssembly(Expr, Branches, Val, BranchesAsm) :-
+branchesAssembly(Expr, Branches, Val, DestructPred, BranchesAsm) :-
     Branches = (FirstBranch; RestBranches) ->
-        branchesAssembly(Expr, FirstBranch, Val, FirstAsm),
-        branchesAssembly(Expr, RestBranches, Val, RestAsm),
+        branchesAssembly(Expr, FirstBranch, Val, DestructPred, FirstAsm),
+        branchesAssembly(Expr, RestBranches, Val, DestructPred, RestAsm),
         append(FirstAsm, RestAsm, BranchesAsm)
         ;
         !(Branches = (Pattern => Result)),
-        Pattern =.. [Name | Args],
         assembly(Result, Val, [], ResultAsm),
-        destructAssemblies(Args, DestArgs, ResultAsm, DestAsm),
-        BranchesAsm = [[destruct(Expr, Name, DestArgs) | DestAsm]].
+        call(DestructPred, Pattern, Expr, ResultAsm, DestAsm),
+        BranchesAsm = [DestAsm].
 
 :- begin_tests(destructAssemblies).
 
 test(struct) :-
     destructAssemblies([(_::int64, '_')], Args, [], Asm),
-    (Args, Asm) =@= ([X], [destruct(X, ',', [_::int64, Y]), delete(Y)]).
+    (Args, Asm) =@= ([X], [destruct(X, ',', [_::int64, Y::Type]),
+                           literal(0, Dummy::int64),
+                           call(del, [Dummy::int64, Y::Type], [Type:delete, int64:any], _)]).
 
 :- end_tests(destructAssemblies).
 
@@ -790,18 +791,20 @@ destructAssemblies([], [], Asm, Asm).
 destructAssemblies([Var::Type | Args], [Var::Type | DestArgs], AsmIn, AsmOut) :-
     destructAssemblies(Args, DestArgs, AsmIn, AsmOut).
 
-destructAssemblies(['_' | Args], [X | DestArgs], AsmIn, AsmOut) :-
-    destructAssemblies(Args, DestArgs, [delete(X) | AsmIn], AsmOut).
+destructAssemblies(['_' | Args], [X::Type | DestArgs], AsmIn, AsmOut) :-
+    destructAssemblies(Args, DestArgs,
+        [literal(0, Dummy::int64),
+         call(del, [Dummy::int64, X::Type], [Type:delete, int64:any], _) 
+         | AsmIn], AsmOut).
 
 destructAssemblies([&Cons | MoreArgs], [X | MoreDestArgs], AsmIn, AsmOut) :-
     my_callable(Cons),
     functor(Cons, Name, Arity),
     is_struct(Name/Arity),
     Cons =.. [_ | Args],
-    destructAssemblies(Args, DestArgs, [], ArgsAsm),
-    transformBranchForRef(ArgsAsm, ArgsAsmForRef),
+    destructRefAssemblies(Args, DestArgs, [], ArgsAsm),
     destructAssemblies(MoreArgs, MoreDestArgs, [], MoreAsm),
-    append([destruct_ref(X, Name, DestArgs) | ArgsAsmForRef], MoreAsm, AsmMid),
+    append([destruct_ref(X, Name, DestArgs) | ArgsAsm], MoreAsm, AsmMid),
     append(AsmMid, AsmIn, AsmOut).
 
 destructAssemblies([Cons | MoreArgs], [X | MoreDestArgs], AsmIn, AsmOut) :-
@@ -812,6 +815,30 @@ destructAssemblies([Cons | MoreArgs], [X | MoreDestArgs], AsmIn, AsmOut) :-
     destructAssemblies(Args, DestArgs, AsmIn, AsmMid),
     destructAssemblies(MoreArgs, MoreDestArgs, 
         [destruct(X, Name, DestArgs) | AsmMid], AsmOut).
+
+destructAssembly(Cons, Val, AsmIn, AsmOut) :-
+    Cons =.. [Name | Args],
+    destructAssemblies(Args, DestArgs, AsmIn, AsmMid),
+    AsmOut = [destruct(Val, Name, DestArgs) | AsmMid].
+
+destructRefAssemblies([], [], Asm, Asm).
+destructRefAssemblies([Var::Type | Args], [Var::Type | DestArgs], AsmIn, AsmOut) :-
+    destructRefAssemblies(Args, DestArgs, AsmIn, AsmOut).
+destructRefAssemblies(['_' | Args], [_ | DestArgs], AsmIn, AsmOut) :-
+    destructRefAssemblies(Args, DestArgs, AsmIn, AsmOut).
+destructRefAssemblies([Cons | MoreArgs], [X | MoreDestArgs], AsmIn, AsmOut) :-
+    my_callable(Cons),
+    functor(Cons, Name, Arity),
+    is_struct(Name/Arity),
+    Cons =.. [_ | Args],
+    destructRefAssemblies(Args, DestArgs, AsmIn, AsmMid),
+    destructRefAssemblies(MoreArgs, MoreDestArgs, 
+        [destruct_ref(X, Name, DestArgs) | AsmMid], AsmOut).
+
+destructRefAssembly(Cons, Val, AsmIn, AsmOut) :-
+    Cons =.. [Name | Args],
+    destructRefAssemblies(Args, DestArgs, AsmIn, AsmMid),
+    AsmOut = [destruct_ref(Val, Name, DestArgs) | AsmMid].
 
 linearityCheck([], Result, StateIn, StateOut) :-
     !consumeVar(Result, StateIn, State1),
@@ -846,9 +873,6 @@ linearityCheckStep(call(_, Ins, _, Out), _, StateIn, StateOut) :-
 
 linearityCheckStep(literal(_, Out), _, StateIn, StateOut) :-
     introduceVar(Out, StateIn, StateOut).
-
-linearityCheckStep(delete(X), _, StateIn, StateOut) :-
-    consumeVar(X, StateIn, StateOut).
 
 consumeVar(Var, StateIn, StateOut) :-
     \+ \+((Var = V::_, var(V))) ->
@@ -1005,11 +1029,8 @@ transformBranchForRef([Cmd | Cmds], CmdsRef) :-
     Cmd = destruct(Expr, Name, Args) ->
         transformBranchForRef([destruct_ref(Expr, Name, Args) | Cmds], CmdsRef)
         ;
-        (Cmd = delete(_) ->
-            transformBranchForRef(Cmds, CmdsRef)
-            ;
-            CmdsRef = [Cmd | RestCmdsRef],
-            transformBranchForRef(Cmds, RestCmdsRef)).
+        CmdsRef = [Cmd | RestCmdsRef],
+        transformBranchForRef(Cmds, RestCmdsRef).
 
 transformCommandForRef(destruct(Expr, Name, Args), destruct_ref(Expr, Name, Args)).
 
@@ -1125,12 +1146,6 @@ test(destruct_free_var) :-
     Three = 3,
     Asm = [destruct(X, foo, [Y, Z])].
 
-% Deletes are simply ignored (and removed).
-test(destruct_free_var) :-
-    specialize([delete(_),
-                delete(_)], Asm),
-    Asm = [].
-
 % Calls to implemented functions are replaced with their bodies.
 test(call_implemented) :-
     specialize([call(+, [A, B], [int64:plus], C),
@@ -1196,8 +1211,6 @@ specialize([destruct(Term, Name, Args) | AsmIn], AsmOut) :-
         specialize(AsmIn, AsmOut).
 specialize([destruct_ref(Term, Name, Args) | AsmIn], AsmOut) :-
     specialize([destruct(Term, Name, Args) | AsmIn], AsmOut).
-specialize([delete(_) | AsmIn], AsmOut) :-
-    specialize(AsmIn, AsmOut).
 specialize([call(Name, Args, TypeGuard, Result) | AsmIn], AsmOut) :-
     function_impl(Name, TypeGuard, Args, Body, Result) ->
         append(Body, AsmIn, Asm1),
@@ -1287,6 +1300,12 @@ test(sumToList) :-
     X == [1, 2, 3, 4, 5].
 
 :- end_tests(sum_to_list).
+
+enumerateVars(Var::_, N, N1) :-
+    var(Var),
+    N1 is N + 1,
+    atom_number(Num, N),
+    atom_concat('v', Num, Var).
 
 % ============= Prelude =============
 :- compileStatement((class T : delete where { X : any => X del T -> X }),
