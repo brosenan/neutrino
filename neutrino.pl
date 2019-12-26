@@ -376,8 +376,6 @@ inferTypeSpecial(case Expr of {Branches}, OutType, Assumptions) :-
 inferTypeSpecial(case Expr of & {Branches}, OutType, Assumptions) :-
     inferCaseExprType(Expr, Branches, OutType, Assumptions, makeRef).
 
-inferTypeSpecial('_', _, []).
-
 inferTypeSpecial(_::Type, Type, []).
 
 inferTypeSpecial(&Expr, &Type, Assumptions) :-
@@ -487,9 +485,8 @@ validateLValue(LValue, Type) :-
         ;
         throw(not_lvalue(LValue, Type)).
 
-lValue(LValue) :-
-    LValue = (_::_).
-lValue('_').
+lValue(_::_).
+
 lValue(Cons) :-
     my_callable(Cons),
     Cons =.. [Name | Args],
@@ -641,9 +638,9 @@ removeVars(Var::Type, new, _) :-
 
 replaceSingletosWithDelete(Var, S, S) :-
     var(Var) ->
-        Var = '_'
+        Var = '_'::_
         ;
-        Var = _ :: _.
+        Var = _::_.
 
 :- begin_tests(assembly).
 
@@ -692,7 +689,7 @@ test(case) :-
     compileStatement((union foobar1 = foo1(int64) + bar1(float64)), []),
     assembly((case foo1(42) of {
         foo1('A'::int64) => 'A'::int64 == 1;
-        bar1('_') => false
+        bar1('_'::float64) => false
     }), Val, [], Asm),
     (Val, Asm) =@= (V::bool,
                     [literal(42,FourtyTwo::int64),
@@ -701,9 +698,9 @@ test(case) :-
                         [[destruct(X::foobar1,foo1,['A'::int64]),
                          literal(1,One::int64),
                          call(==,['A'::int64,One::int64],[],V::bool)],
-                       [destruct(X::foobar1,bar1,[Y::YType]),
+                       [destruct(X::foobar1,bar1,[Y::float64]),
                         literal(0,Dummy::int64),
-                        call(del,[Dummy::int64,Y::YType],[YType:delete,int64:any],_),
+                        call(del,[Dummy::int64,Y::float64],[float64:delete,int64:any],_),
                         construct(false,[],V::bool)]])]).
 
 
@@ -715,7 +712,7 @@ test(case_ref) :-
     compileStatement((union foobar2 = foo2(string) + bar2(string)), []),
     assembly((case foo2("hello") of & {
         foo2('A'::(&string)) => 'A'::(&string) == 'A'::(&string);
-        bar2('_') => false
+        bar2('_'::(&string)) => false
     }), Val, [], Asm),
     (Val, Asm) =@= (V::bool,
                     [literal("hello", Hello::string),
@@ -723,7 +720,7 @@ test(case_ref) :-
                      case(X::foobar2,
                      [[destruct_ref(X::foobar2, foo2, ['A'::(&string)]),
                        call(==, ['A'::(&string), 'A'::(&string)], [], V::bool)],
-                      [destruct_ref(X::foobar2, bar2, [_]),
+                      [destruct_ref(X::foobar2, bar2, [_::(&string)]),
                        construct(false, [], V::bool)]])]).
 :- end_tests(assembly).
 
@@ -779,23 +776,25 @@ branchesAssembly(Expr, Branches, Val, DestructPred, BranchesAsm) :-
 :- begin_tests(destructAssemblies).
 
 test(struct) :-
-    destructAssemblies([(_::int64, '_')], Args, [], Asm),
-    (Args, Asm) =@= ([X], [destruct(X, ',', [_::int64, Y::Type]),
+    destructAssemblies([(_::int64, '_'::string)], Args, [], Asm),
+    (Args, Asm) =@= ([X], [destruct(X, ',', [_::int64, Y::string]),
                            literal(0, Dummy::int64),
-                           call(del, [Dummy::int64, Y::Type], [Type:delete, int64:any], _)]).
+                           call(del, [Dummy::int64, Y::string], 
+                                     [string:delete, int64:any], _)]).
 
 :- end_tests(destructAssemblies).
 
 destructAssemblies([], [], Asm, Asm).
 
-destructAssemblies([Var::Type | Args], [Var::Type | DestArgs], AsmIn, AsmOut) :-
-    destructAssemblies(Args, DestArgs, AsmIn, AsmOut).
-
-destructAssemblies(['_' | Args], [X::Type | DestArgs], AsmIn, AsmOut) :-
+destructAssemblies([Var::Type | Args], [X::Type | DestArgs], AsmIn, AsmOut) :-
+    Var == '_' ->
     destructAssemblies(Args, DestArgs,
         [literal(0, Dummy::int64),
          call(del, [Dummy::int64, X::Type], [Type:delete, int64:any], _) 
-         | AsmIn], AsmOut).
+         | AsmIn], AsmOut)
+    ;
+    Var = X,
+    destructAssemblies(Args, DestArgs, AsmIn, AsmOut).
 
 destructAssemblies([&Cons | MoreArgs], [X | MoreDestArgs], AsmIn, AsmOut) :-
     my_callable(Cons),
@@ -822,9 +821,11 @@ destructAssembly(Cons, Val, AsmIn, AsmOut) :-
     AsmOut = [destruct(Val, Name, DestArgs) | AsmMid].
 
 destructRefAssemblies([], [], Asm, Asm).
-destructRefAssemblies([Var::Type | Args], [Var::Type | DestArgs], AsmIn, AsmOut) :-
-    destructRefAssemblies(Args, DestArgs, AsmIn, AsmOut).
-destructRefAssemblies(['_' | Args], [_ | DestArgs], AsmIn, AsmOut) :-
+destructRefAssemblies([VarIn::Type | Args], [VarOut::Type | DestArgs], AsmIn, AsmOut) :-
+    (VarIn == '_' ->
+        true
+        ;
+        VarOut = VarIn),
     destructRefAssemblies(Args, DestArgs, AsmIn, AsmOut).
 destructRefAssemblies([Cons | MoreArgs], [X | MoreDestArgs], AsmIn, AsmOut) :-
     my_callable(Cons),
@@ -1270,7 +1271,7 @@ compileStructDeleteInstance(Type, Constructor) :-
     }), ['X'=X]).
 
 fillWithUnderscores([]).
-fillWithUnderscores(['_' | L]) :-
+fillWithUnderscores(['_'::_ | L]) :-
     fillWithUnderscores(L).
 
 compileUnionDeleteInstance(Union, OptionList, VNs) :-
