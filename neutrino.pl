@@ -27,6 +27,7 @@
 
 :- discontiguous constant_propagation/2.
 :- discontiguous type_signature/4.
+:- discontiguous syntacticMacro/2.
 
 !Goal :- Goal, !.
 !Goal :- throw(unsatisfied(Goal)).
@@ -57,8 +58,9 @@ compileAll(SourceFile, S, Term, VNs) :-
         read_term(S, NextTerm, [variable_names(NextVNs)]),
         compileAll(SourceFile, S, NextTerm, NextVNs).
 
-compileStatement((assert Expr), VNs) :-
+compileStatement((assert ExprWithMacros), VNs) :-
     nameVars(VNs),
+    replaceInTerm(ExprWithMacros, syntacticReplacement, Expr),
     inferType(Expr, Type, Assumptions),
     matchType(Type, bool, Expr),
     checkAssumptions(Assumptions),
@@ -999,10 +1001,14 @@ assignFakeTypes([V | Vars]) :-
 
 checkAssumptions([]).
 checkAssumptions([T:C | Rest]) :-
-    class_instance(T, C) ->
+    checkAssumption(T:C) ->
         checkAssumptions(Rest)
         ;
         throw(type_not_instance(T, C)).
+
+% TODO: Check the class's underlying assumptions.
+checkAssumption(T:C) :-
+    class_instance(T, C).
 
 sumToList(Sum, List) :-
     sumToList(Sum, [], List).
@@ -1320,6 +1326,116 @@ syntacticMacro(
         false => Else
     })).
 
+:- begin_tests(extractLambda).
+
+test(inc_lambda) :-
+    reset_gensym(lambda),
+    extractLambda(('X'::T->'X'::T+1), StructDef, InstanceDef, Replacement),
+    StructDef == (struct lambda1 = lambda1),
+    InstanceDef =@= (instance lambda1 : (int64 -> int64) where {
+        lambda1!('X'::int64) := ('X'::int64)+1
+    }),
+    Replacement == lambda1.
+
+test(polymorphic_lambda) :-
+    reset_gensym(lambda),
+    extractLambda(('X'::T->'X'::T+'X'::T), _StructDef, InstanceDef, _Replacement),
+    InstanceDef =@= (T1 : plus => instance lambda1 : (T1 -> T1) where {
+        lambda1!('X'::T1) := ('X'::T1)+('X'::T1)
+    }).
+
+test(monomorphic_closure) :-
+    reset_gensym(lambda),
+    once(extractLambda(('X'::Tx->'X'::Tx+'Y'::_+1),
+        StructDef, InstanceDef, Replacement)),
+    StructDef =@= (struct lambda1 = lambda1(int64)),
+    writeln(InstanceDef),
+    InstanceDef =@= (instance lambda1 : (int64 -> int64) where {
+        lambda1('Y'::int64)!('X'::int64) := ('X'::int64)+('Y'::int64)+1
+    }),
+    Replacement == lambda1('Y'::int64).
+
+test(polymorphic_closure) :-
+    reset_gensym(lambda),
+    once(extractLambda(('X'::Tx->'X'::Tx+'Y'::Ty), StructDef, InstanceDef, Replacement)),
+    StructDef =@= (struct lambda1(T) = lambda1(T)),
+    InstanceDef =@= (T : plus => instance lambda1(T) : (T -> T) where {
+        lambda1('Y'::T)!('X'::T) := ('X'::T)+('Y'::T)
+    }),
+    Replacement == lambda1('Y'::Ty).
+
+:- end_tests(extractLambda).
+
+extractLambda((X->Y), 
+        (struct LambdaStructType = LambdaStructSig), 
+        InstanceDef,
+        LambdaCons) :-
+    gensym(lambda, LambdaName),
+    inferType(X, Tx, _),
+    inferType(Y, Ty, Assumptions),
+    once(lambdaTypesAndArgs(X, Y, Types, Args)),
+    LambdaStructSig =.. [LambdaName | Types],
+    term_variables(Types, TypeVars),
+    LambdaStructType =.. [LambdaName | TypeVars],
+    LambdaCons =.. [LambdaName | Args],
+    filterMetAssumptions(Assumptions, NeededAssumptions),
+    InstanceDef1 = (instance LambdaStructType : (Tx -> Ty) where {
+        LambdaCons!(X) := Y
+    }),
+    (NeededAssumptions = [_|_] ->
+        listToTuple(NeededAssumptions, Context),
+        InstanceDef = (Context => InstanceDef1)
+        ;
+        InstanceDef = InstanceDef1).
+
+lambdaTypesAndArgs(X, Y, Types, ClosureVars) :-
+    walk(Y, findVars, [], VarsInBody),
+    walk(X, findVars, [], VarsInHead),
+    (setof(Var, (member(Var, VarsInBody), 
+                 \+member(Var, VarsInHead)), ClosureVars); true),
+    extractVarTypes(ClosureVars, Types).
+
+extractVarTypes([], []).
+extractVarTypes([_::Type | VarWithTypes], [Type | Types]) :-
+    extractVarTypes(VarWithTypes, Types).
+
+listToTuple([A], A).
+listToTuple([A, B | C], (A, BC)) :-
+    listToTuple([B | C], BC).
+
+filterMetAssumptions([], []).
+filterMetAssumptions([T:C | Assum], AssumOut) :-
+    nonvar(T),
+    checkAssumption(T:C) ->
+        filterMetAssumptions(Assum, AssumOut)
+        ;
+        AssumOut = [T:C | AssumMid],
+        filterMetAssumptions(Assum, AssumMid).
+
+
+findVars(Name::Type, State, [Name::Type | State]).
+
+syntacticMacro((X->Y), Replacement) :-
+    !extractLambda((X->Y), StructDef, InstanceDef, Replacement),
+    !unnameVars(StructDef, StructDef1),
+    !makeVarNames(StructDef1, StructDefVNs),
+    !compileStatement(StructDef1, StructDefVNs),
+    !unnameVars(InstanceDef, InstanceDef1),
+    !makeVarNames(InstanceDef1, InstanceDefVNs),
+    !compileStatement(InstanceDef1, InstanceDefVNs).
+    
+makeVarNames(Term, VNs) :-
+    term_variables(Term, Vars),
+    makeVarNameList(Vars, VNs, 0).
+
+makeVarNameList([], [], _).
+makeVarNameList([Var | Vars], [Name=Var | VNs], N) :-
+    atom_number(Num, N),
+    atom_concat('V', Num, Name),
+    N1 is N + 1,
+    makeVarNameList(Vars, VNs, N1).
+
+
 % ============= Prelude =============
 :- compileStatement((class T : delete where { X : any => X del T -> X }),
     ['T'=T, 'X'=X]).
@@ -1345,3 +1461,5 @@ syntacticMacro(
     ['X'=X, 'N'=N]).
 :- compileStatement((instance string : delete where 
     { X del S := delete_string(S, X) }), ['X'=X, 'S'=S]).
+:- compileStatement((T1 : any, T2 : any => class F:(T1->T2) where { F!T1 -> T2 }),
+    ['T1'=T1, 'T2'=T2, 'F'=F]).
