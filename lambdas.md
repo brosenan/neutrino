@@ -35,3 +35,40 @@ greeting(Greeting) := (Thing -> Greeting + ", " + Thing).
 
 assert greeting("hello")!"world" == "hello, world".
 ```
+
+As mentioned above, closure variables are _owned_ by the closure. This is true even if the lambda just uses the object by reference.
+
+```prolog
+assert (S -> strlen(&S))!"hello" == 5.
+```
+
+```error
+Variable S of non-basic type string is not used in this context.
+```
+
+To solve this problem, use the explicit `del` operator within the lambda's body. This compiles successfully:
+
+```prolog
+assert (S -> strlen(&S) del S)!"hello" == 5.
+```
+
+### Currying
+
+[Currying](https://en.wikipedia.org/wiki/Currying) is a style that allows functions in the lambda calculus, where a function application takes only one parameter, to take several parameters. It is done in steps, where in each step the lambda expression returns a lambda expression that accepts the rest of the parameters.
+
+In Neutrino, there are two standard ways to provide multiple parameters to a lambda. One is by the use of tuples, and the other is through the use of currying. The following example demonstrates these two options for a function that sums three integers. It compiles successfully:
+
+```prolog
+using_a_tuple := X, Y, Z -> X+Y+Z+0.
+
+assert using_a_tuple!(1, 2, 3) == 6.
+
+by_currying := X -> Y -> Z -> X+Y+Z+0.
+
+assert by_currying!1!2!3 == 6.
+```
+
+Note that in both examples we add a `+0` to the sum to hint that the value is of type `int64`.
+
+Because Neutrino uses partial evaluation as part of the compilation process, both methods should be equivalent from a performance standpoint. Currying provides more flexibility in terms of partial application.
+

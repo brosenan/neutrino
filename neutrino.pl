@@ -10,7 +10,7 @@
 :- op(900, xfx, where).
 :- op(700, fx, case).
 :- op(600, xfx, of).
-:- op(300, xfy, !).
+:- op(300, yfx, !).
 :- op(200, fx, &).
 :- op(100, fx, !).
 :- op(100, xfx, ::).
@@ -60,13 +60,13 @@ compileAll(SourceFile, S, Term, VNs) :-
 
 compileStatement((assert ExprWithMacros), VNs) :-
     nameVars(VNs),
-    replaceInTerm(ExprWithMacros, syntacticReplacement, Expr),
+    applyMacros(ExprWithMacros, Expr),
     inferType(Expr, Type, Assumptions),
     matchType(Type, bool, Expr),
     checkAssumptions(Assumptions),
     once(assembly(Expr, Result, [], Asm)),
     linearityCheck(Asm, Result, [], _),
-    unnameVars((Asm, Result), (UnAsm, UnResult)),
+    unnameVars((Asm, Result), (UnAsm, UnResult), _),
     specialize(UnAsm, Residual),
     \+(UnResult == true) ->
         throw(assertion_failed(UnResult, Residual))
@@ -146,7 +146,7 @@ compileStatement((class T:C where {Decls}), VNs, Context) :-
 
 compileFunctionDefinition((Func := Body), TypeContext) :-
     walk(Func, replaceSingletosWithDelete, [], _),
-    replaceInTerm(Body, syntacticReplacement, BodyAfterMacros),
+    applyMacros(Body, BodyAfterMacros),
     Func =.. [Name | Args],
     inferType(BodyAfterMacros, Type, BodyAssumptions),
     inferTypes(Args, ArgTypes, ArgAssumptions),
@@ -168,7 +168,7 @@ compileFunctionDefinition((Func := Body), TypeContext) :-
     !stateMapList(introduceVars, DestArgs, [], VarState1),
     !linearityCheck(Asm, Result, VarState1, _),
     unnameVars((TypeContext, DestArgs, Asm, Result), 
-               (UnTypeContext, UnArgs, UnAsm, UnResult)),
+               (UnTypeContext, UnArgs, UnAsm, UnResult), _),
     assert(function_impl(Name, UnTypeContext, UnArgs, UnAsm, UnResult)).
 
 inferType(_::T, T, []).
@@ -338,7 +338,7 @@ validateType(T) :-
 
 type(Type) :- basicType(Type).
 type(string).
-type(_::type(_)).
+type(_::type).
 
 basicType(int64).
 basicType(float64).
@@ -369,7 +369,7 @@ verifyTypeVariables([Arg | Args]) :-
 
 verifyTypeVariable(Name::Kind) :-
     var(Kind) ->
-        Kind = type(_)
+        Kind = type
         ;
         throw(double_use_of_var(Name)).
 
@@ -1053,15 +1053,21 @@ test(unnameVars) :-
     unnameVars(foo('A'::int64, 'B'::_)+
                foo('A'::int64, C::string)+
                foo(C::string, _) + 
-               [FakeType:seq(FakeType)], Unnamed),
-    Unnamed =@= foo(A, _B)+
+               [FakeType:seq(FakeType)], Unnamed, VNs),
+    Unnamed =@= foo(A, B)+
                 foo(A, C)+
                 foo(C, _)+
-                [T:seq(T)].
+                [T:seq(T)],
+    Unnamed = foo(A, B)+
+              foo(A, C)+
+              foo(C, _)+
+              [T:seq(T)],
+    member('A'=A1, VNs),
+    A1 == A.
 
 :- end_tests(unnameVars).
 
-unnameVars(Term, Unnamed) :-
+unnameVars(Term, Unnamed, Names) :-
     walk(Term, findNames, [], Names),
     replaceInTerm(Term, replaceNamed(Names), Unnamed).
 
@@ -1225,7 +1231,8 @@ specialize([call(Name, Args, TypeGuard, Result) | AsmIn], AsmOut) :-
         specialize(Asm1, AsmOut)
         ;
         ground(Args),
-        Func =.. [Name | Args],
+        removeRefs(Args, ArgsNoRefs),
+        Func =.. [Name | ArgsNoRefs],
         constant_propagation(Func, Result) ->
             specialize(AsmIn, AsmOut)
             ;
@@ -1315,6 +1322,9 @@ enumerateVars(Var::_, N, N1) :-
     atom_number(Num, N),
     atom_concat('v', Num, Var).
 
+applyMacros(ExprWithMacros, Expr) :-
+    replaceInTerm(ExprWithMacros, syntacticReplacement, Expr).
+
 syntacticReplacement(TermIn, TermOut) :-
     nonvar(TermIn),
     syntacticMacro(TermIn, TermOut).
@@ -1349,7 +1359,6 @@ test(monomorphic_closure) :-
     once(extractLambda(('X'::Tx->'X'::Tx+'Y'::_+1),
         StructDef, InstanceDef, Replacement)),
     StructDef =@= (struct lambda1 = lambda1(int64)),
-    writeln(InstanceDef),
     InstanceDef =@= (instance lambda1 : (int64 -> int64) where {
         lambda1('Y'::int64)!('X'::int64) := ('X'::int64)+('Y'::int64)+1
     }),
@@ -1370,17 +1379,18 @@ extractLambda((X->Y),
         (struct LambdaStructType = LambdaStructSig), 
         InstanceDef,
         LambdaCons) :-
+    applyMacros(Y, YAfterMacros),
     gensym(lambda, LambdaName),
     inferType(X, Tx, _),
-    inferType(Y, Ty, Assumptions),
-    once(lambdaTypesAndArgs(X, Y, Types, Args)),
+    inferType(YAfterMacros, Ty, Assumptions),
+    once(lambdaTypesAndArgs(X, YAfterMacros, Types, Args)),
     LambdaStructSig =.. [LambdaName | Types],
     term_variables(Types, TypeVars),
     LambdaStructType =.. [LambdaName | TypeVars],
     LambdaCons =.. [LambdaName | Args],
     filterMetAssumptions(Assumptions, NeededAssumptions),
     InstanceDef1 = (instance LambdaStructType : (Tx -> Ty) where {
-        LambdaCons!(X) := Y
+        LambdaCons!(X) := YAfterMacros
     }),
     (NeededAssumptions = [_|_] ->
         listToTuple(NeededAssumptions, Context),
@@ -1417,25 +1427,18 @@ findVars(Name::Type, State, [Name::Type | State]).
 
 syntacticMacro((X->Y), Replacement) :-
     !extractLambda((X->Y), StructDef, InstanceDef, Replacement),
-    !unnameVars(StructDef, StructDef1),
-    !makeVarNames(StructDef1, StructDefVNs),
+    !unnameVars(StructDef, StructDef1, StructDefVNs),
     !compileStatement(StructDef1, StructDefVNs),
-    !unnameVars(InstanceDef, InstanceDef1),
-    !makeVarNames(InstanceDef1, InstanceDefVNs),
+    !unnameVars(InstanceDef, InstanceDef1, InstanceDefVNs),
     !compileStatement(InstanceDef1, InstanceDefVNs).
-    
-makeVarNames(Term, VNs) :-
-    term_variables(Term, Vars),
-    makeVarNameList(Vars, VNs, 0).
 
-makeVarNameList([], [], _).
-makeVarNameList([Var | Vars], [Name=Var | VNs], N) :-
-    atom_number(Num, N),
-    atom_concat('V', Num, Name),
-    N1 is N + 1,
-    makeVarNameList(Vars, VNs, N1).
-
-
+removeRefs([], []).
+removeRefs([Arg | Args], [ArgNoRefs | ArgsNoRefs]) :-
+    (Arg = &ArgNoRefs ->
+        true
+        ;
+        ArgNoRefs = Arg),
+    removeRefs(Args, ArgsNoRefs).
 % ============= Prelude =============
 :- compileStatement((class T : delete where { X : any => X del T -> X }),
     ['T'=T, 'X'=X]).
