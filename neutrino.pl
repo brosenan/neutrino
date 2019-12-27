@@ -70,10 +70,10 @@ compileStatement((assert ExprWithMacros), VNs) :-
     linearityCheck(Asm, Result, [], _),
     unnameVars((Asm, Result), (UnAsm, UnResult), _),
     specialize(UnAsm, Residual),
-    \+(UnResult == true) ->
+    (\+(UnResult == true) ->
         throw(assertion_failed(UnResult, Residual))
         ;
-        true.
+        true).
 
 compileStatement((Func := Body), VNs) :-
     nameVars(VNs),
@@ -757,7 +757,8 @@ assembly(Expr, Val, AsmIn, AsmOut) :-
             assemblies(Args, Vals, [construct(Name, Vals, Val) | AsmIn], AsmOut)
             ;
             assemblies(Args, Vals, [call(Name, Vals, Assumptions, Val) | AsmIn], AsmOut)),
-        inferTypes(Vals, ArgTypes, _).
+        inferTypes(Vals, ArgTypes, _),
+        !inferTypeClasses(Assumptions).
 
 assemblies([], [], Asm, Asm).
 assemblies([Expr | Exprs], [Val | Vals], AsmIn, AsmOut) :-
@@ -1214,40 +1215,58 @@ test(case_with_concrete_expr) :-
 
 specialize([], []).
 specialize([literal(Val, Val) | AsmIn], AsmOut) :-
-    specialize(AsmIn, AsmOut).
+    trace(AsmIn),
+    !specialize(AsmIn, AsmOut).
 specialize([construct(Name, Args, Term) | AsmIn], AsmOut) :-
     Term =.. [Name | Args],
-    specialize(AsmIn, AsmOut).
+    trace(AsmIn),
+    !specialize(AsmIn, AsmOut).
 specialize([destruct(Term, Name, Args) | AsmIn], AsmOut) :-
     var(Term) ->
         AsmOut = [destruct(Term, Name, Args) | AsmMid],
-        specialize(AsmIn, AsmMid)
+        trace(AsmIn),
+        !specialize(AsmIn, AsmMid)
         ;
         Term =.. [Name | Args],
-        specialize(AsmIn, AsmOut).
+        trace(AsmIn),
+        !specialize(AsmIn, AsmOut).
 specialize([destruct_ref(Term, Name, Args) | AsmIn], AsmOut) :-
-    specialize([destruct(Term, Name, Args) | AsmIn], AsmOut).
+    (Term = &RefTerm ->
+        true
+        ;
+        RefTerm = Term),
+    Asm1 = [destruct(RefTerm, Name, Args) | AsmIn], 
+    trace(Asm1),
+    !specialize(Asm1, AsmOut).
 specialize([call(Name, Args, TypeGuard, Result) | AsmIn], AsmOut) :-
     function_impl(Name, TypeGuard, Args, Body, Result) ->
         append(Body, AsmIn, Asm1),
-        specialize(Asm1, AsmOut)
+        trace(Asm1),
+        !specialize(Asm1, AsmOut)
         ;
         ground(Args),
         removeRefs(Args, ArgsNoRefs),
         Func =.. [Name | ArgsNoRefs],
         constant_propagation(Func, Result) ->
-            specialize(AsmIn, AsmOut)
+            trace(AsmIn),
+            !specialize(AsmIn, AsmOut)
             ;
             AsmOut = [call(Name, Args, TypeGuard, Result) | Asm2],
-            specialize(AsmIn, Asm2).
+            trace(AsmIn),
+            !specialize(AsmIn, Asm2).
 specialize([case(Expr, Branches) | AsmIn], AsmOut) :-
     var(Expr) ->
         AsmOut = [case(Expr, Branches) | Asm1],
-        specialize(AsmIn, Asm1)
+        trace(AsmIn),
+        !specialize(AsmIn, Asm1)
         ;
         selectAsmBranch(Branches, Branch),
         append(Branch, AsmIn, Asm2),
-        specialize(Asm2, AsmOut).
+        trace(Asm2),
+        !specialize(Asm2, AsmOut).
+
+% trace(Asm) :- writeln(trace=Asm).
+trace(_).
 
 selectAsmBranch([[DestructCmd | RestOfFirstBranch] | Branches], Branch) :-
     specialize([DestructCmd], []) ->
@@ -1342,7 +1361,7 @@ syntacticMacro(
 
 test(inc_lambda) :-
     reset_gensym(lambda),
-    extractLambda(('X'::T->'X'::T+1), StructDef, InstanceDef, Replacement),
+    extractLambda('X'::T, 'X'::T+1, =, '->', '!', StructDef, InstanceDef, Replacement),
     StructDef == (struct lambda1 = lambda1),
     InstanceDef =@= (instance lambda1 : (int64 -> int64) where {
         lambda1!('X'::int64) := ('X'::int64)+1
@@ -1351,14 +1370,15 @@ test(inc_lambda) :-
 
 test(polymorphic_lambda) :-
     reset_gensym(lambda),
-    extractLambda(('X'::T->'X'::T+'X'::T), _StructDef, InstanceDef, _Replacement),
+    extractLambda('X'::T, 'X'::T+'X'::T, =, '->', '!',
+        _StructDef, InstanceDef, _Replacement),
     InstanceDef =@= (T1 : plus => instance lambda1 : (T1 -> T1) where {
         lambda1!('X'::T1) := ('X'::T1)+('X'::T1)
     }).
 
 test(monomorphic_closure) :-
     reset_gensym(lambda),
-    once(extractLambda(('X'::Tx->'X'::Tx+'Y'::_+1),
+    once(extractLambda('X'::Tx, 'X'::Tx+'Y'::_+1, =, '->', '!',
         StructDef, InstanceDef, Replacement)),
     StructDef =@= (struct lambda1 = lambda1(int64)),
     InstanceDef =@= (instance lambda1 : (int64 -> int64) where {
@@ -1368,7 +1388,8 @@ test(monomorphic_closure) :-
 
 test(polymorphic_closure) :-
     reset_gensym(lambda),
-    once(extractLambda(('X'::Tx->'X'::Tx+'Y'::Ty), StructDef, InstanceDef, Replacement)),
+    once(extractLambda('X'::Tx, 'X'::Tx+'Y'::Ty, =, '->', '!',
+        StructDef, InstanceDef, Replacement)),
     StructDef =@= (struct lambda1(T) = lambda1(T)),
     InstanceDef =@= (T : plus => instance lambda1(T) : (T -> T) where {
         lambda1('Y'::T)!('X'::T) := ('X'::T)+('Y'::T)
@@ -1377,10 +1398,10 @@ test(polymorphic_closure) :-
 
 :- end_tests(extractLambda).
 
-extractLambda((X->Y), 
-        (struct LambdaStructType = LambdaStructSig), 
-        InstanceDef,
-        LambdaCons) :-
+extractLambda(X, Y, TypeModifier, ClassName, MethodName,
+        StructDef, InstanceDef, Replacement) :-
+    StructDef = (struct LambdaStructType = LambdaStructSig),
+    Replacement = LambdaCons,
     applyMacros(Y, YAfterMacros),
     gensym(lambda, LambdaName),
     inferType(X, Tx, _),
@@ -1391,8 +1412,11 @@ extractLambda((X->Y),
     LambdaStructType =.. [LambdaName | TypeVars],
     LambdaCons =.. [LambdaName | Args],
     filterMetAssumptions(Assumptions, NeededAssumptions),
-    InstanceDef1 = (instance LambdaStructType : (Tx -> Ty) where {
-        LambdaCons!(X) := YAfterMacros
+    Class =.. [ClassName, Tx, Ty],
+    call(TypeModifier, LambdaCons, LambdaConsMod),
+    Method =.. [MethodName, LambdaConsMod, X],
+    InstanceDef1 = (instance LambdaStructType : Class where {
+        Method := YAfterMacros
     }),
     (NeededAssumptions = [_|_] ->
         listToTuple(NeededAssumptions, Context),
@@ -1428,7 +1452,16 @@ filterMetAssumptions([T:C | Assum], AssumOut) :-
 findVars(Name::Type, State, [Name::Type | State]).
 
 syntacticMacro((X->Y), Replacement) :-
-    !extractLambda((X->Y), StructDef, InstanceDef, Replacement),
+    lambdaMacro(X, Y, =, '->', '!', Replacement).
+
+syntacticMacro((X@>Y), Replacement) :-
+    lambdaMacro(X, Y, addRef, '@>', '@', Replacement).
+
+addRef(X, &X).
+
+lambdaMacro(X, Y, TypeModifier, ClassName, MethodName, Replacement) :-
+    !extractLambda(X, Y, TypeModifier, ClassName, MethodName,
+        StructDef, InstanceDef, Replacement),
     !unnameVars(StructDef, StructDef1, StructDefVNs),
     !compileStatement(StructDef1, StructDefVNs),
     !unnameVars(InstanceDef, InstanceDef1, InstanceDefVNs),
@@ -1441,6 +1474,12 @@ removeRefs([Arg | Args], [ArgNoRefs | ArgsNoRefs]) :-
         ;
         ArgNoRefs = Arg),
     removeRefs(Args, ArgsNoRefs).
+
+inferTypeClasses([]).
+inferTypeClasses([T:C | Assumptions]) :-
+    class_instance(T, C),
+    inferTypeClasses(Assumptions).
+
 % ============= Prelude =============
 :- compileStatement((class T : delete where { X : any => X del T -> X }),
     ['T'=T, 'X'=X]).

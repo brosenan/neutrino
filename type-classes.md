@@ -318,7 +318,7 @@ instance int64 : seq(int64) where {
     next(N) := just((N, N+1))
 }.
 
-S : seq(T) =>
+T : any, S : seq(T) =>
 declare nth(S, int64) -> maybe(T).
 
 nth(Seq, Index) := case (Index == 0) of {

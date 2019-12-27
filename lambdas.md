@@ -88,4 +88,9 @@ map_list(L, F) := case L of {
     [] => [] del F;
     [X | Xs] => [&F@X | map_list(Xs, F)]
 }.
+
+assert case map_list([1, 2, 3], (N @> N+1)) of {
+    [] => false;
+    [Head | _] => Head == 2
+}.
 ```
