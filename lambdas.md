@@ -72,3 +72,20 @@ Note that in both examples we add a `+0` to the sum to hint that the value is of
 
 Because Neutrino uses partial evaluation as part of the compilation process, both methods should be equivalent from a performance standpoint. Currying provides more flexibility in terms of partial application.
 
+## Lambdas for Multiple Invocations
+
+Often we need to invoke a lambda multiple times. One example is applying a function to every element on a list (think map, filter or reduce operations). Neutrino supports lambdas for multiple invocations through the `@>` type class.
+
+The `@>` class defines one method, the `@` operator, which instead of consuming the lambda it takes a reference to it. This allows the lambda to be used multiple times. On the down-side, the lambda only gets reference to the colsure parameters.
+
+In the following example we define a polymorphic `map_list` function, which applies the given lambda on every element of a list. It consumes one list and generates another in return. It compiles successfully:
+
+```prolog
+T1 : any, T1 : any, F : (T1 @> T2), F : delete =>
+declare map_list(list(T1), F) -> list(T2).
+
+map_list(L, F) := case L of {
+    [] => [] del F;
+    [X | Xs] => [&F@X | map_list(Xs, F)]
+}.
+```

@@ -1,6 +1,7 @@
 :- op(1090, xfx, =>).
 :- op(1090, xfx, :=).
 :- op(1070, fx, declare).
+:- op(1050, xfy, @>).
 :- op(1050, fx, assert).
 :- op(1050, fx, union).
 :- op(1050, fx, struct).
@@ -11,6 +12,7 @@
 :- op(700, fx, case).
 :- op(600, xfx, of).
 :- op(300, yfx, !).
+:- op(300, yfx, @).
 :- op(200, fx, &).
 :- op(100, fx, !).
 :- op(100, xfx, ::).
@@ -671,18 +673,18 @@ test(var_ref) :-
 test(simple_func) :-
     once(assembly(1+2, Val::int64, [], Assembly)),
     (Val, Assembly) =@= (Val,
-                        [literal(2, Two::int64),
-                         literal(1, One::int64),
+                        [literal(1, One::int64),
+                         literal(2, Two::int64),
                          call(+, [One::int64, Two::int64], [int64:plus], Val::int64)]).
 
 % Nested functions are assembled bottom-up.
 test(nested_func) :-
     once(assembly(1+2+3, Val::int64, [], Assembly)),
     (Val, Assembly) =@= (Val,
-                        [literal(3, Three::int64),
+                        [literal(1, One::int64),
                          literal(2, Two::int64), 
-                         literal(1, One::int64),
                          call(+, [One::int64, Two::int64], [int64:plus], X::int64),
+                         literal(3, Three::int64),
                          call(+, [X::int64, Three::int64], [int64:plus], Val::int64)]).
 
 % Case expressions are assembled by first assembling the expression being matched,
@@ -759,8 +761,8 @@ assembly(Expr, Val, AsmIn, AsmOut) :-
 
 assemblies([], [], Asm, Asm).
 assemblies([Expr | Exprs], [Val | Vals], AsmIn, AsmOut) :-
-    assembly(Expr, Val, AsmIn, AsmMid),
-    assemblies(Exprs, Vals, AsmMid, AsmOut).
+    assemblies(Exprs, Vals, AsmIn, AsmMid),
+    assembly(Expr, Val, AsmMid, AsmOut).
 
 isSimpleExpr(Expr) :- number(Expr).
 isSimpleExpr(Expr) :- string(Expr).
@@ -1465,4 +1467,6 @@ removeRefs([Arg | Args], [ArgNoRefs | ArgsNoRefs]) :-
 :- compileStatement((instance string : delete where 
     { X del S := delete_string(S, X) }), ['X'=X, 'S'=S]).
 :- compileStatement((T1 : any, T2 : any => class F:(T1->T2) where { F!T1 -> T2 }),
+    ['T1'=T1, 'T2'=T2, 'F'=F]).
+:- compileStatement((T1 : any, T2 : any => class F:(T1@>T2) where { &F@T1 -> T2 }),
     ['T1'=T1, 'T2'=T2, 'F'=F]).
