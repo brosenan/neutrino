@@ -708,17 +708,19 @@ test(case) :-
         foo1('A'::int64) => 'A'::int64 == 1;
         bar1('_'::float64) => false
     }), Val, [], Asm),
-    (Val, Asm) =@= (V::bool,
+    (Val, Asm) =@= (Val,
                     [literal(42,FourtyTwo::int64),
                      construct(foo1,[FourtyTwo::int64],X::foobar1),
                      case(X::foobar1,
                         [[destruct(X::foobar1,foo1,['A'::int64]),
                          literal(1,One::int64),
-                         call(==,['A'::int64,One::int64],[],V::bool)],
+                         call(==,['A'::int64,One::int64],[],V1::bool),
+                         assign(V1::bool, Val)],
                        [destruct(X::foobar1,bar1,[Y::float64]),
                         literal(0,Dummy::int64),
                         call(del,[Dummy::int64,Y::float64],[float64:delete,int64:any],_),
-                        construct(false,[],V::bool)]])]).
+                        construct(false,[],V2::bool),
+                         assign(V2::bool, Val)]])]).
 
 
 % Case expression over reference types differ from normal case expressions
@@ -731,14 +733,16 @@ test(case_ref) :-
         foo2('A'::(&string)) => 'A'::(&string) == 'A'::(&string);
         bar2('_'::(&string)) => false
     }), Val, [], Asm),
-    (Val, Asm) =@= (V::bool,
+    (Val, Asm) =@= (Val,
                     [literal("hello", Hello::string),
                      construct(foo2, [Hello::string], X::foobar2),
                      case(X::foobar2,
                      [[destruct_ref(X::foobar2, foo2, ['A'::(&string)]),
-                       call(==, ['A'::(&string), 'A'::(&string)], [], V::bool)],
+                       call(==, ['A'::(&string), 'A'::(&string)], [], V1::bool),
+                       assign(V1::bool, Val)],
                       [destruct_ref(X::foobar2, bar2, [_::(&string)]),
-                       construct(false, [], V::bool)]])]).
+                       construct(false, [], V2::bool),
+                       assign(V2::bool, Val)]])]).
 :- end_tests(assembly).
 
 assemblySpecial(Expr, Val::Type, Asm, [literal(Expr, Val::Type) | Asm]) :-
@@ -790,7 +794,7 @@ branchesAssembly(Expr, Branches, Val, DestructPred, BranchesAsm) :-
         append(FirstAsm, RestAsm, BranchesAsm)
         ;
         !(Branches = (Pattern => Result)),
-        assembly(Result, Val, [], ResultAsm),
+        assembly(Result, Val1::Type, [assign(Val1::Type, Val)], ResultAsm),
         call(DestructPred, Pattern, Expr, ResultAsm, DestAsm),
         BranchesAsm = [DestAsm].
 
@@ -895,6 +899,10 @@ linearityCheckStep(call(_, Ins, _, Out), _, StateIn, StateOut) :-
 
 linearityCheckStep(literal(_, Out), _, StateIn, StateOut) :-
     introduceVar(Out, StateIn, StateOut).
+
+linearityCheckStep(assign(In, Out), _, StateIn, StateOut) :-
+    consumeVar(In, StateIn, StateMid),
+    introduceVar(Out, StateMid, StateOut).
 
 consumeVar(Var, StateIn, StateOut) :-
     \+ \+((Var = V::_, var(V))) ->
@@ -1233,6 +1241,12 @@ test(case_with_concrete_expr) :-
     Res == foo(Y1, X1),
     Asm == [].
 
+% The assign command unifies its output with its input.
+test(assign) :-
+    specialize([assign(2, A),
+                assign(A, B)], Asm),
+    B == 2,
+    Asm == [].
 
 :- end_tests(specialize).
 
@@ -1287,6 +1301,9 @@ specialize([case(Expr, Branches) | AsmIn], AsmOut) :-
         append(Branch, AsmIn, Asm2),
         trace(Asm2),
         !specialize(Asm2, AsmOut).
+
+specialize([assign(Val, Val) | AsmIn], AsmOut) :-
+    specialize(AsmIn, AsmOut).
 
 % trace(Asm) :- writeln(trace=Asm).
 trace(_).

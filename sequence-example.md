@@ -82,4 +82,28 @@ instance filter(S, F) : seq(T) where {
 }.
 
 assert nth(filter([1, 2, 3], (N @> *N == 2)), 0) == just(2).
+
+% The last function returns the last element of a sequence.
+% It works in two steps. First, it retreives the first element of the sequence, and
+% calls the function last_or on the rest of the sequence with the first element as
+% default. last_or returns the last element of a non-empty sequence, or the give default
+% for an empty sequence. 
+T : delete, S : seq(T) =>
+declare last(S) -> maybe(T).
+
+T : delete, S : seq(T) =>
+declare last_or(S, T) -> T.
+
+last(Seq) := case next(Seq) of {
+    just((Head, Tail)) => just(last_or(Tail, Head));
+    none => none
+}.
+
+last_or(Seq, Default) := case next(Seq) of {
+    just((Head, Tail)) => last_or(Tail, Head) del Default;
+    none => Default
+}.
+
+assert last([1, 2, 3, 4, 5]) == just(5).
+assert last([]) == none.
 ```
