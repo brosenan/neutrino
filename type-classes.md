@@ -367,7 +367,7 @@ class S : seq(T) where {
     next(S) -> maybe((T, S))
 }.
 
-S : seq(T) =>
+T : any, S : seq(T) =>
 declare nth(S, int64) -> maybe(T).
 
 nth(Seq, Index) := case (Index == 0) of {
@@ -383,7 +383,7 @@ nth(Seq, Index) := case (Index == 0) of {
 ```
 
 ```error
-Type mismatch. Expression case (Index::int64==0)of{true=>case next(Seq::unknown_type12)of{just((First::int64,_::unknown_type12))=>just(First::int64+1);none=>none};false=>case next(Seq::unknown_type12)of{just((_::_6146,Next::unknown_type12))=>nth(Next::unknown_type12,Index::int64-1);none=>none}} expected to be maybe(unknown_type13), inferred: maybe(int64).
+expected to be maybe(unknown_type12), inferred: maybe(int64).
 ```
 
 ## Polymorphic Instance Definitions

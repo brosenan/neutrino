@@ -14,6 +14,7 @@
 :- op(300, yfx, !).
 :- op(300, yfx, @).
 :- op(200, fx, &).
+:- op(200, fx, *).
 :- op(100, fx, !).
 :- op(100, xfx, ::).
 
@@ -22,7 +23,7 @@
 :- dynamic union_type/2.
 :- dynamic is_constructor/2.
 :- dynamic type_class/4.
-:- dynamic class_instance/2.
+:- dynamic class_instance/3.
 :- dynamic fake_type/1.
 :- dynamic is_struct/1.
 :- dynamic function_impl/5.
@@ -128,7 +129,7 @@ compileStatement((instance T:C where {Defs}), VNs, Context) :-
         true
         ;
         throw(type_class_does_not_exist(C))),
-    assert(class_instance(T, C)),
+    assert(class_instance(T, C, Context)),
     !nameVars(VNs),
     !validateInstance(Decls, Defs, T, C),
     saturateTypes(Context),
@@ -172,11 +173,6 @@ compileFunctionDefinition((Func := Body), TypeContext) :-
     unnameVars((TypeContext, DestArgs, Asm, Result), 
                (UnTypeContext, UnArgs, UnAsm, UnResult), _),
     assert(function_impl(Name, UnTypeContext, UnArgs, UnAsm, UnResult)).
-
-inferType(_::T, T, []).
-inferType(N, int64, []) :- integer(N).
-inferType(N, float64, []) :- float(N).
-inferType(S, string, []) :- string(S).
 
 inferType(Term, Type, Assumptions) :-
     inferTypeSpecial(Term, Type, Assumptions) ->
@@ -246,7 +242,9 @@ formatError(method_does_not_depend_on_instance_type(Name, C),
     ["Method ", Name,
      " does not depend on the instance type in the declaration of class ", C, "."]).
 formatError(type_not_instance(T, C),
-    ["Type ", T, " is not an instance of class ", C, "."]).
+    ["Type ", T, " is not an instance of class ", C,
+    ". It is, however, an instance of ", Classes]) :-
+        findall(C1, class_instance(T, C1, _), Classes).
 formatError(type_class_does_not_exist(C),
     ["Type class ", C, " does not exist."]).
 formatError(undefined_expression(Functor),
@@ -375,6 +373,11 @@ verifyTypeVariable(Name::Kind) :-
         ;
         throw(double_use_of_var(Name)).
 
+inferTypeSpecial(_::T, T, []).
+inferTypeSpecial(N, int64, []) :- integer(N).
+inferTypeSpecial(N, float64, []) :- float(N).
+inferTypeSpecial(S, string, []) :- string(S).
+
 inferTypeSpecial(case Expr of {Branches}, OutType, Assumptions) :-
     inferCaseExprType(Expr, Branches, OutType, Assumptions, (=)).
 
@@ -382,6 +385,15 @@ inferTypeSpecial(case Expr of & {Branches}, OutType, Assumptions) :-
     inferCaseExprType(Expr, Branches, OutType, Assumptions, makeRef).
 
 inferTypeSpecial(_::Type, Type, []).
+
+inferTypeSpecial(*_::TypeRef, Type, []) :-
+    TypeRef = &Type ->
+        (basicType(Type) ->
+            true
+            ;
+            throw(cannot_deref_non_basic_type(Type)))
+        ;
+        throw(cannot_deref_non_reference(Type)).
 
 inferTypeSpecial(&Expr, &Type, Assumptions) :-
     my_callable(Expr),
@@ -735,6 +747,7 @@ assemblySpecial(Expr, Val::Type, Asm, [literal(Expr, Val::Type) | Asm]) :-
 
 assemblySpecial(Name::Type, Name::Type, Asm, Asm).
 assemblySpecial(&Name::Type, &Name::Type, Asm, Asm).
+assemblySpecial(*Var, Var, Asm, Asm).
 
 assemblySpecial((case Expr of {Branches}), Val, AsmIn, AsmOut) :-
     branchesAssembly(ExprVal, Branches, Val, destructAssembly, BranchesAsm),
@@ -756,8 +769,10 @@ assembly(Expr, Val, AsmIn, AsmOut) :-
         (is_constructor(Name, Arity) ->
             assemblies(Args, Vals, [construct(Name, Vals, Val) | AsmIn], AsmOut)
             ;
-            assemblies(Args, Vals, [call(Name, Vals, Assumptions, Val) | AsmIn], AsmOut)),
-        inferTypes(Vals, ArgTypes, _),
+            assemblies(Args, Vals,
+                [call(Name, Vals, Assumptions, Val) | AsmIn], AsmOut)),
+        inferTypes(Vals, ArgTypes1, _),
+        reconcileTypes(ArgTypes, ArgTypes1),
         !inferTypeClasses(Assumptions).
 
 assemblies([], [], Asm, Asm).
@@ -988,7 +1003,7 @@ saturateTypes([T:C | Rest]) :-
     term_variables(T:C, Vars),
     assignFakeTypes(Vars),
     (fake_type(T) ->
-        assert(class_instance(T, C))
+        assert(class_instance(T, C, []))
         ;
         true),
     saturateTypes(Rest).
@@ -1004,14 +1019,22 @@ assignFakeTypes([V | Vars]) :-
 
 checkAssumptions([]).
 checkAssumptions([T:C | Rest]) :-
-    checkAssumption(T:C) ->
-        checkAssumptions(Rest)
+    var(T) ->
+        true
+        % Rationale: If T is a free variable it means that the expression being
+        % evaluated is a contructor that does not specify T (e.g., [] for list(T)).
+        % In such cases we cannot check that T is a member of C, but checking this
+        % is not important as no object of T exists in the expression.
         ;
-        throw(type_not_instance(T, C)).
+        checkAssumption(T:C) ->
+            checkAssumptions(Rest)
+            ;
+            throw(type_not_instance(T, C)).
 
 % TODO: Check the class's underlying assumptions.
 checkAssumption(T:C) :-
-    class_instance(T, C).
+    class_instance(T, C, Context),
+    checkAssumptions(Context).
 
 sumToList(Sum, List) :-
     sumToList(Sum, [], List).
@@ -1274,7 +1297,7 @@ selectAsmBranch([[DestructCmd | RestOfFirstBranch] | Branches], Branch) :-
         ;
         selectAsmBranch(Branches, Branch).
 
-class_instance(_, any).
+class_instance(_, any, []).
 
 validateDecls((Decl1; Decl2), Ctx) :-
     validateDecls(Decl1, Ctx),
@@ -1477,8 +1500,24 @@ removeRefs([Arg | Args], [ArgNoRefs | ArgsNoRefs]) :-
 
 inferTypeClasses([]).
 inferTypeClasses([T:C | Assumptions]) :-
-    class_instance(T, C),
-    inferTypeClasses(Assumptions).
+    var(T) ->
+        true
+        ;
+        class_instance(T, C, InstanceAssumptions),
+        inferTypeClasses(InstanceAssumptions),
+        inferTypeClasses(Assumptions).
+
+reconcileTypes([], []).
+reconcileTypes([Type | Types], [Type1 | Types1]) :-
+    reconcileType(Type, Type1),
+    reconcileTypes(Types, Types1).
+
+reconcileType(T1, T2) :-
+    unifiable(T1, T2, _) ->
+        T1 = T2
+        ;
+        basicType(T1),
+        (T1 = &T2 ; &T1 = T2).
 
 % ============= Prelude =============
 :- compileStatement((class T : delete where { X : any => X del T -> X }),

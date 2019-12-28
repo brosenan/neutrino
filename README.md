@@ -82,6 +82,10 @@ What I want to achieve with Neutrino is the ability to:
 2. Compile DSL programs to native code using partial evaluation.
 3. Allow the native code to be as low-level as possible, by using linear types.
 
+# Example Programs
+
+* [Sequence Example](sequence-example.md)
+
 ## Status
 
 Neutrino is work in progress. Even when it will be code-complete, I don't expect it to be useful for anything other than language experimentation.
