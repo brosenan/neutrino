@@ -139,10 +139,12 @@ bind_maybe(X, Fn) := case X of {
 assert bind_maybe << {
     One := just(1);
     Two := just(One+1);
-    just(Two + 2)} == just(4).
+    just(Two + 2)
+} == just(4).
 
-assert (bind_maybe << {
+assert bind_maybe << {
     _ := just(1);
     Two := none;
-    just(Two + 2)}) == none.
+    just(Two + 2)
+} == none.
 ```
