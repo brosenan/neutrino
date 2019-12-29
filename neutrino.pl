@@ -1536,6 +1536,17 @@ syntacticMacro(A >> B, Result) :-
     B1 =.. [Name | Args],
     Result =.. [Name, A1 | Args].
 
+syntacticMacro((Bind << {Statements}), BindExpr) :-
+    bindExpression(Statements, Bind, BindExprWithLambdas),
+    applyMacros(BindExprWithLambdas, BindExpr).
+
+bindExpression(Statements, Bind, BindExpr) :-
+    Statements = (Var := Expr; Rest) ->
+        BindExpr =.. [Bind, Expr, (Var -> RestExpr)],
+        bindExpression(Rest, Bind, RestExpr)
+        ;
+        BindExpr = Statements.
+
 % ============= Prelude =============
 :- compileStatement((class T : delete where { X : any => X del T -> X }),
     ['T'=T, 'X'=X]).
