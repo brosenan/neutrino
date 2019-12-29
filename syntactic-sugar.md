@@ -125,7 +125,7 @@ assert just(1) >> bind_maybe(_ -> none) >> bind_maybe(N -> just(N + 2)) == none.
 
 With the use of the `>>` operator, this code is relatively readable. However, we can do better. Neutrino does provide syntactic sugar similar to Haskell's [do notation](https://en.wikibooks.org/wiki/Haskell/do_notation), to help serialize monad-like code. The idea is to make the code more similar to procedural code, where operations are performed step-by-step. In each step the result is bound to one or more variables, which are then available down the road.
 
-Because there is no single class named `monad`, we do not have a single keyword similar to Haskell's `do` keyword. Instead, the `| {}` operator takes on its left hand the name of the bind function to be used. The following is the above example converted to this notation. It compiles successfully:
+Because there is no single class named `monad`, we do not have a single keyword similar to Haskell's `do` keyword. Instead, the `<< {}` operator takes on its left hand the name of the bind function to be used. The following is the above example converted to this notation. It compiles successfully:
 
 ```prolog
 T1 : any, T2 : any, F : (T1 -> maybe(T2)), F : delete =>
