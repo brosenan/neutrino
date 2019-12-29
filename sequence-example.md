@@ -38,16 +38,15 @@ instance list(T) : seq(T) where {
 T : any, S : seq(T) =>
 declare nth(S, int64) -> maybe(T).
 
-nth(Seq, Index) := case (Index == 0) of {
-    true => case next(Seq) of {
+nth(Seq, Index) := if(Index == 0,
+    case next(Seq) of {
         just((First, _)) => just(First);
         none => none
-    };
-    false => case next(Seq) of {
+    },
+    case next(Seq) of {
         just((_, Next)) => nth(Next, Index-1);
         none => none
-    }
-}.
+    }).
 
 % Instead of providing a map function, we provide a map struct, which is an instance of
 % a sequence.
@@ -104,6 +103,6 @@ last_or(Seq, Default) := case next(Seq) of {
     none => Default
 }.
 
-assert last([1, 2, 3, 4, 5]) == just(5).
-assert last([]) == none.
+assert [1, 2, 3, 4, 5] >> last == just(5).
+assert [] >> last == none.
 ```
