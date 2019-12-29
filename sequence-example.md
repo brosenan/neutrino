@@ -24,7 +24,7 @@ instance int64 : seq(int64) where {
 % A list is a sequence.
 T : any =>
 instance list(T) : seq(T) where {
-    empty(L_) := case L_ of & {
+    empty(L) := case L of & {
         [] => true;
         [_ | _] => false
     };
@@ -56,7 +56,7 @@ struct map(S, F) = map(S, F).
 T1 : any, S : seq(T1), T2 : any, F : (T1 @> T2), F : delete =>
 instance map(S, F) : seq(T2) where {
     % The map is empty if the underlying sequence is empty.
-    empty(&map(Seq_, Fn_)) := empty(Seq_);
+    empty(&map(Seq, Fn)) := empty(Seq);
     % Applying the lambda (by reference) to the head, and providing a map on the tail.
     next(map(Seq, Fn)) := case next(Seq) of {
         just((Head, Tail)) => just((&Fn@Head, map(Tail, Fn)));
@@ -72,7 +72,7 @@ struct filter(S, F) = filter(S, F).
 
 T : delete, S : seq(T), F : (&T @> bool), F : delete =>
 instance filter(S, F) : seq(T) where {
-    empty(&filter(Seq_, Fn_)) := empty(Seq_);
+    empty(&filter(Seq, Fn)) := empty(Seq);
     next(filter(Seq, Fn)) := case next(Seq) of {
         just((Head, Tail)) => if(&Fn@(&Head),
                                 just((Head, filter(Tail, Fn))),

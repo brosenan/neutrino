@@ -997,7 +997,8 @@ compileMethods((Method1; Method2), Ctx) :-
 
 compileMethods((Func := Expr), Ctx) :-
     append(Ctx, _, MethodCtx),
-    compileFunctionDefinition((Func := Expr), MethodCtx).
+    copy_term((Func := Expr), MethodDef),
+    compileFunctionDefinition(MethodDef, MethodCtx).
 
 tupleToList(Tuple, List) :-
     Tuple = (A,B) ->
