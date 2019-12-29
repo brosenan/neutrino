@@ -813,32 +813,27 @@ destructAssemblies([], [], Asm, Asm).
 
 destructAssemblies([Var::Type | Args], [X::Type | DestArgs], AsmIn, AsmOut) :-
     Var == '_' ->
-    destructAssemblies(Args, DestArgs,
-        [literal(0, Dummy::int64),
-         call(del, [Dummy::int64, X::Type], [Type:delete, int64:any], _) 
-         | AsmIn], AsmOut)
-    ;
-    Var = X,
-    destructAssemblies(Args, DestArgs, AsmIn, AsmOut).
+        destructAssemblies(Args, DestArgs,
+            [literal(0, Dummy::int64),
+            call(del, [Dummy::int64, X::Type], [Type:delete, int64:any], _) 
+            | AsmIn], AsmOut)
+        ;
+        Var = X,
+        destructAssemblies(Args, DestArgs, AsmIn, AsmOut).
 
 destructAssemblies([&Cons | MoreArgs], [X | MoreDestArgs], AsmIn, AsmOut) :-
     my_callable(Cons),
     functor(Cons, Name, Arity),
     is_struct(Name/Arity),
-    Cons =.. [_ | Args],
-    destructRefAssemblies(Args, DestArgs, [], ArgsAsm),
-    destructAssemblies(MoreArgs, MoreDestArgs, [], MoreAsm),
-    append([destruct_ref(X, Name, DestArgs) | ArgsAsm], MoreAsm, AsmMid),
-    append(AsmMid, AsmIn, AsmOut).
+    destructRefAssembly(Cons, X, AsmIn, AsmMid),
+    destructAssemblies(MoreArgs, MoreDestArgs, AsmMid, AsmOut).
 
 destructAssemblies([Cons | MoreArgs], [X | MoreDestArgs], AsmIn, AsmOut) :-
     my_callable(Cons),
     functor(Cons, Name, Arity),
     is_struct(Name/Arity),
-    Cons =.. [_ | Args],
-    destructAssemblies(Args, DestArgs, AsmIn, AsmMid),
-    destructAssemblies(MoreArgs, MoreDestArgs, 
-        [destruct(X, Name, DestArgs) | AsmMid], AsmOut).
+    destructAssembly(Cons, X, AsmIn, AsmMid),
+    destructAssemblies(MoreArgs, MoreDestArgs, AsmMid, AsmOut).
 
 destructAssembly(Cons, Val, AsmIn, AsmOut) :-
     Cons =.. [Name | Args],
@@ -856,10 +851,8 @@ destructRefAssemblies([Cons | MoreArgs], [X | MoreDestArgs], AsmIn, AsmOut) :-
     my_callable(Cons),
     functor(Cons, Name, Arity),
     is_struct(Name/Arity),
-    Cons =.. [_ | Args],
-    destructRefAssemblies(Args, DestArgs, AsmIn, AsmMid),
-    destructRefAssemblies(MoreArgs, MoreDestArgs, 
-        [destruct_ref(X, Name, DestArgs) | AsmMid], AsmOut).
+    destructRefAssembly(Cons, X, AsmIn, AsmMid),
+    destructRefAssemblies(MoreArgs, MoreDestArgs, AsmMid, AsmOut).
 
 destructRefAssembly(Cons, Val, AsmIn, AsmOut) :-
     Cons =.. [Name | Args],
