@@ -81,7 +81,7 @@ instance filter(S, F) : seq(T) where {
     }
 }.
 
-assert nth(filter([1, 2, 3], (N @> *N == 2)), 0) == just(2).
+assert [1, 2, 3] >> filter(N @> *N == 2) >> nth(0) == just(2).
 
 % The last function returns the last element of a sequence.
 % It works in two steps. First, it retreives the first element of the sequence, and

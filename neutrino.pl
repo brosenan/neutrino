@@ -1530,6 +1530,12 @@ reconcileType(T1, T2) :-
         basicType(T1),
         (T1 = &T2 ; &T1 = T2).
 
+syntacticMacro(A >> B, Result) :-
+    applyMacros(A, A1),
+    applyMacros(B, B1),
+    B1 =.. [Name | Args],
+    Result =.. [Name, A1 | Args].
+
 % ============= Prelude =============
 :- compileStatement((class T : delete where { X : any => X del T -> X }),
     ['T'=T, 'X'=X]).
