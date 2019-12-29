@@ -65,7 +65,7 @@ instance map(S, F) : seq(T2) where {
 }.
 
 % Todo: assert nth(map([1, 2, 3], (N @> N + 2)), 1) == just("foo").
-assert nth(map([1, 2, 3], (N @> N + 2)), 1) == just(4).
+assert [1, 2, 3] >> map(N @> N + 2) >> nth(1) == just(4).
 
 % Like map, filter is also a struct which is an instance of seq.
 struct filter(S, F) = filter(S, F).
