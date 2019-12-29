@@ -9,8 +9,13 @@
 :- op(1050, fx, instance).
 :- op(1020, xfx, del).
 :- op(900, xfx, where).
+:- op(700, xfx, <=>).
 :- op(700, fx, case).
 :- op(600, xfx, of).
+:- op(500, yfx, <+>).
+:- op(500, yfx, <->).
+:- op(400, yfx, <*>).
+:- op(400, yfx, </>).
 :- op(300, yfx, !).
 :- op(300, yfx, @).
 :- op(200, fx, &).
@@ -1576,3 +1581,5 @@ bindExpression(Statements, Bind, BindExpr) :-
     ['T1'=T1, 'T2'=T2, 'F'=F]).
 :- compileStatement((T1 : any, T2 : any => class F:(T1@>T2) where { &F@T1 -> T2 }),
     ['T1'=T1, 'T2'=T2, 'F'=F]).
+:- forall(member(Op, [<+>, <->, <*>, </>, <=>, =]),
+	  (Struct =.. [Op, T1, T2], compileStatement((struct Struct = Struct), ['T1'=T1, 'T2'=T2]))).
