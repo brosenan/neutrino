@@ -1527,7 +1527,7 @@ reconcileType(T1, T2) :-
     unifiable(T1, T2, _) ->
         T1 = T2
         ;
-        basicType(T1),
+        (nonvar(T1), basicType(T1); nonvar(T2), basicType(T2)),
         (T1 = &T2 ; &T1 = T2).
 
 syntacticMacro(A >> B, Result) :-
