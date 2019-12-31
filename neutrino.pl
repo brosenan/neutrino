@@ -1452,7 +1452,8 @@ extractLambda(X, Y, TypeModifier, ClassName, MethodName,
         listToTuple(NeededAssumptions, Context),
         InstanceDef = (Context => InstanceDef1)
         ;
-        InstanceDef = InstanceDef1).
+        InstanceDef = InstanceDef1),
+    writeln(InstanceDef).
 
 lambdaTypesAndArgs(X, Y, Types, ClosureVars) :-
     walk(Y, findVars, [], VarsInBody),
@@ -1472,7 +1473,7 @@ listToTuple([A, B | C], (A, BC)) :-
 filterMetAssumptions([], []).
 filterMetAssumptions([T:C | Assum], AssumOut) :-
     nonvar(T),
-    checkAssumption(T:C) ->
+    \+ \+checkAssumption(T:C) ->
         filterMetAssumptions(Assum, AssumOut)
         ;
         AssumOut = [T:C | AssumMid],
@@ -1485,9 +1486,7 @@ syntacticMacro((X->Y), Replacement) :-
     lambdaMacro(X, Y, =, '->', '!', Replacement).
 
 syntacticMacro((X@>Y), Replacement) :-
-    lambdaMacro(X, Y, addRef, '@>', '@', Replacement).
-
-addRef(X, &X).
+    lambdaMacro(X, Y, makeRef, '@>', '@', Replacement).
 
 lambdaMacro(X, Y, TypeModifier, ClassName, MethodName, Replacement) :-
     !extractLambda(X, Y, TypeModifier, ClassName, MethodName,

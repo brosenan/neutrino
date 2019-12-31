@@ -81,11 +81,11 @@ depends_on(Expr, Var) := case Expr of & {
     minus(C, D) => depends_on(C, Var) \/ depends_on(D, Var)
 }.
 
-% assert let << {
-%     Expr := v("X") + c(2.0) - v("Y");
-%     Var := "X";
-%     depends_on(&Expr, &Var) del Var
-% }.
+assert let << {
+    Expr := v("X") + c(2.0) - v("Y");
+    Var := "X";
+    depends_on(&Expr, &Var) del Var, Expr
+}.
 
 % assert let << {
 %     Expr := v("X") + c(2.0) - v("Y");
