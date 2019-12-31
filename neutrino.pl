@@ -30,6 +30,7 @@
 
 :- discontiguous constant_propagation/2.
 :- discontiguous type_signature/4.
+:- discontiguous class_instance/3.
 :- discontiguous syntacticMacro/2.
 
 !Goal :- Goal, !.
@@ -264,6 +265,8 @@ writeln_list(S, [First | Rest]) :-
 writeln_list(S, []) :-
     writeln(S, "").
 
+type_signature(*, [&T], T, [T:basic_type]).
+
 type_signature(==, [T, T], bool, []).
 constant_propagation(A==B, V) :- A == B -> V = true; V = false.
 
@@ -340,9 +343,11 @@ type(Type) :- basicType(Type).
 type(string).
 type(_::type).
 
-basicType(int64).
-basicType(float64).
-basicType(&_).
+basicType(T) :- class_instance(T, basic_type, _).
+
+class_instance(int64, basic_type, []).
+class_instance(float64, basic_type, []).
+class_instance(&_, basic_type, []).
 
 validateVars([]).
 validateVars([Var | Vars]) :-
@@ -385,15 +390,6 @@ inferTypeSpecial(case Expr of & {Branches}, OutType, Assumptions) :-
     inferCaseExprType(Expr, Branches, OutType, Assumptions, makeRef).
 
 inferTypeSpecial(_::Type, Type, []).
-
-inferTypeSpecial(*_::TypeRef, Type, []) :-
-    TypeRef = &Type ->
-        (basicType(Type) ->
-            true
-            ;
-            throw(cannot_deref_non_basic_type(Type)))
-        ;
-        throw(cannot_deref_non_reference(Type)).
 
 inferTypeSpecial(&Expr, &Type, Assumptions) :-
     my_callable(Expr),
