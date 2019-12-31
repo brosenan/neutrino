@@ -1264,7 +1264,7 @@ specialize([destruct_ref(Term, Name, Args) | AsmIn], AsmOut) :-
         RefTerm = Term),
     Asm1 = [destruct(RefTerm, Name, Args) | AsmIn], 
     trace(Asm1),
-    !specialize(Asm1, AsmOut).
+    specialize(Asm1, AsmOut).
 specialize([call(Name, Args, TypeGuard, Result) | AsmIn], AsmOut) :-
     function_impl(Name, TypeGuard, Args, Body, Result) ->
         append(Body, AsmIn, Asm1),

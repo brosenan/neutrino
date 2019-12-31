@@ -487,4 +487,3 @@ assert check(foo).
 assert check(bar).
 assert check(baz).
 ```
-
