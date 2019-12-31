@@ -417,7 +417,11 @@ assert type_name([1, 2, 3]) == "list(int64)".
 assert type_name([]) == "nil".
 ```
 
-## Automatic Instances
+## Built-In Type Classes
+
+The `any` class mentioned [above](#the-any-class) is a built-in class, defined by Neutrino. Here we discuss other such languages.
+
+### The `delete` Class
 
 Neutrino automatically defines every struct and union type as instances of the `delete` class.
 
@@ -430,3 +434,57 @@ union bar(T) = bar1(T, int64) + bar2(string, T) + bar3.
 assert (2 del foo("hello", "world")) == 2.
 assert (3.14 del bar1("hello", 42)) == 3.14.
 ```
+
+### The `basic_type` Class
+
+Basic types are types that do not need to adhere to the rules of linear typing. Instances of this class can be used zero or more times in a function, with no restrictions. Neutrino automatically assigns eligible types to this class. Programmers cannot do so themselves.
+
+
+```prolog
+struct foo = foo(int64).
+
+instance foo : basic_type where {
+    something(X) := Y
+}.
+```
+
+```error
+Type class basic_type does not exist.
+```
+
+Numeric types such as `int64` and `float64` are defined as instances of `basic_type`. All references are instances too.
+
+The following compiles successfully:
+
+```prolog
+T : basic_type =>
+declare check(T) -> bool.
+
+check(X) := true.
+
+assert check(3).
+assert check(3.14).
+
+declare check_ref(string) -> bool.
+check_ref(S) := check(&S) del S.
+```
+
+In the above example, the `check` function is legal because it requires that its argument type is of a `basic_type`. This allows it to ignore it.
+
+Union types that do not have any data fields (e.g., `bool`), are instances of `basic_type` as well. The rationale for this is that such union types do not need allocation or de-allocation. Every option that does not have fields does not require an allocation and can be represented with a sentinel. If all options can be represented with a sentinel, there is no need to allocate anything.
+
+The following compiles successfully:
+
+```prolog
+T : basic_type =>
+declare check(T) -> bool.
+
+check(X) := true.
+
+union foobar = foo + bar + baz.
+
+assert check(foo).
+assert check(bar).
+assert check(baz).
+```
+

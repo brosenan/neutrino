@@ -348,6 +348,9 @@ basicType(T) :- class_instance(T, basic_type, _).
 class_instance(int64, basic_type, []).
 class_instance(float64, basic_type, []).
 class_instance(&_, basic_type, []).
+class_instance(T, basic_type, []) :-
+    union_type(T, Options),
+    forall(member(Opt, Options), functor(Opt, _, 0)).
 
 validateVars([]).
 validateVars([Var | Vars]) :-
@@ -754,8 +757,8 @@ assemblySpecial((case Expr of {Branches}), Val, AsmIn, AsmOut) :-
     assembly(Expr, ExprVal, [case(ExprVal, BranchesAsm) | AsmIn], AsmOut).
 
 assemblySpecial((case Expr of & {Branches}), Val, AsmIn, AsmOut) :-
-    branchesAssembly(ExprVal, Branches, Val, destructRefAssembly, BranchesAsm),
-    assembly(Expr, ExprVal, [case(ExprVal, BranchesAsm) | AsmIn], AsmOut).
+    !branchesAssembly(ExprVal, Branches, Val, destructRefAssembly, BranchesAsm),
+    !assembly(Expr, ExprVal, [case(ExprVal, BranchesAsm) | AsmIn], AsmOut).
 
 assembly(Expr, Val, AsmIn, AsmOut) :-
     assemblySpecial(Expr, Val, AsmIn, AsmOut) ->
@@ -785,13 +788,13 @@ isSimpleExpr(Expr) :- string(Expr).
 
 branchesAssembly(Expr, Branches, Val, DestructPred, BranchesAsm) :-
     Branches = (FirstBranch; RestBranches) ->
-        branchesAssembly(Expr, FirstBranch, Val, DestructPred, FirstAsm),
-        branchesAssembly(Expr, RestBranches, Val, DestructPred, RestAsm),
+        !branchesAssembly(Expr, FirstBranch, Val, DestructPred, FirstAsm),
+        !branchesAssembly(Expr, RestBranches, Val, DestructPred, RestAsm),
         append(FirstAsm, RestAsm, BranchesAsm)
         ;
         !(Branches = (Pattern => Result)),
-        assembly(Result, Val1::Type, [assign(Val1::Type, Val)], ResultAsm),
-        call(DestructPred, Pattern, Expr, ResultAsm, DestAsm),
+        !assembly(Result, Val1::Type, [assign(Val1::Type, Val)], ResultAsm),
+        !call(DestructPred, Pattern, Expr, ResultAsm, DestAsm),
         BranchesAsm = [DestAsm].
 
 :- begin_tests(destructAssemblies).
@@ -843,16 +846,17 @@ destructRefAssemblies([VarIn::Type | Args], [VarOut::Type | DestArgs], AsmIn, As
         ;
         VarOut = VarIn),
     destructRefAssemblies(Args, DestArgs, AsmIn, AsmOut).
-destructRefAssemblies([Cons | MoreArgs], [X | MoreDestArgs], AsmIn, AsmOut) :-
+
+destructRefAssemblies([&Cons | MoreArgs], [X | MoreDestArgs], AsmIn, AsmOut) :-
     my_callable(Cons),
     functor(Cons, Name, Arity),
     is_struct(Name/Arity),
-    destructRefAssembly(Cons, X, AsmIn, AsmMid),
-    destructRefAssemblies(MoreArgs, MoreDestArgs, AsmMid, AsmOut).
+    !destructRefAssembly(Cons, X, AsmIn, AsmMid),
+    !destructRefAssemblies(MoreArgs, MoreDestArgs, AsmMid, AsmOut).
 
 destructRefAssembly(Cons, Val, AsmIn, AsmOut) :-
     Cons =.. [Name | Args],
-    destructRefAssemblies(Args, DestArgs, AsmIn, AsmMid),
+    !destructRefAssemblies(Args, DestArgs, AsmIn, AsmMid),
     AsmOut = [destruct_ref(Val, Name, DestArgs) | AsmMid].
 
 linearityCheck([], Result, StateIn, StateOut) :-
