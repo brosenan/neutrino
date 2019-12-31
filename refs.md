@@ -40,7 +40,21 @@ struct foo = foo(int64, string).
 
 declare bar(&foo) -> int64.
 
-bar(&foo(N, S)) := strlen(S) + N.
+bar(&foo(N, S)) := strlen(S) + *N.
+```
+
+### Dereferencing
+
+On the last line of the above example we used the unary `*` operator. Deriving from its meaning in the C programming language, the `*` operator _dereferences_ `N`, which is of a reference type. However, unlike C, in Neutrino dereferencing is only possible for [basic types](type-classes.md#the-basic_type-class). For example, attempting to dereference non-basic types results in compilation errors:
+
+```prolog
+declare foo(&string) -> bool.
+
+foo(S) := *S == "hello".
+```
+
+```error
+Type string is not an instance of class basic_type.
 ```
 
 ## Referencing Owned Objects

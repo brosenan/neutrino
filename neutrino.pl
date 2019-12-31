@@ -421,11 +421,7 @@ inferCaseExprType(Expr, Branches, OutType, Assumptions, Modifier) :-
         throw(incomplete_case_expr(Missing, InType))),
     append(ExprAssumptions, CaseAssumptions, Assumptions).
 
-makeRef(T, RefT) :-
-    nonvar(T), basicType(T) ->
-        RefT = T
-        ;
-        RefT = &T.
+makeRef(T, &T).
 
 union_type(&Type, Options) :-
     union_type(Type, Options).
