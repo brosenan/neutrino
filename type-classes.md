@@ -200,7 +200,7 @@ greet_type(Greeting, Obj) := Greeting + ", " + Obj.
 ```
 
 ```error
-Expression Obj::string expected to be unknown_type12, inferred: string.
+Expression Obj::string expected to be unknown_type8, inferred: string.
 ```
 
 When calling a polymorphic function, the compiler checks the assumptions hold for the given types. For example, if we call `greet_type` on a `float64` without first defining `float64` as an instance of `named_type`, we get a compilation error.
@@ -383,7 +383,7 @@ nth(Seq, Index) := case (Index == 0) of {
 ```
 
 ```error
-expected to be maybe(unknown_type12), inferred: maybe(int64).
+expected to be maybe(unknown_type8), inferred: maybe(int64).
 ```
 
 ## Polymorphic Instance Definitions

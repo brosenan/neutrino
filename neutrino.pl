@@ -998,8 +998,10 @@ tupleToList(Tuple, List) :-
 
 saturateTypes([]).
 saturateTypes([T:C | Rest]) :-
-    term_variables(T:C, Vars),
-    assignFakeTypes(Vars),
+    (var(T) ->
+        assignFakeTypes([T])
+        ;
+        true),
     (fake_type(T) ->
         assert(class_instance(T, C, []))
         ;
@@ -1077,23 +1079,24 @@ test(unnameVars) :-
     unnameVars(foo('A'::int64, 'B'::_)+
                foo('A'::int64, C::string)+
                foo(C::string, _) + 
-               [FakeType:seq(FakeType)], Unnamed, VNs),
+               [FakeType:seq(FakeType), _], Unnamed, VNs),
     Unnamed =@= foo(A, B)+
                 foo(A, C)+
                 foo(C, _)+
-                [T:seq(T)],
+                [T:seq(T), _],
     Unnamed = foo(A, B)+
               foo(A, C)+
               foo(C, _)+
-              [T:seq(T)],
+              [T:seq(T), _],
     member('A'=A1, VNs),
     A1 == A.
 
 :- end_tests(unnameVars).
 
 unnameVars(Term, Unnamed, Names) :-
-    walk(Term, findNames, [], Names),
-    replaceInTerm(Term, replaceNamed(Names), Unnamed).
+    copy_term(Term, Term1),
+    walk(Term1, findNames, [], Names),
+    replaceInTerm(Term1, replaceNamed(Names), Unnamed).
 
 findNames(Term, StateIn, StateOut) :-
     Term = Name::_ ->
@@ -1342,11 +1345,19 @@ fillWithUnderscores(['_'::_ | L]) :-
 compileUnionDeleteInstance(Union, OptionList, VNs) :-
     copy_term(Union, Union1),
     deleteUnionBranches(OptionList, X, Branches),
-    compileStatement((instance Union1 : delete where {
+    InstanceDef = (instance Union1 : delete where {
         X del U := case U of {
             Branches
         }
-    }), ['x'=X, 'u'=U | VNs]).
+    }),
+    % term_variables(Union1, TypeVars),
+    % createAnyAssumptions(TypeVars, AnyAssumptions),
+    % (AnyAssumptions = [_ | _] ->
+    %     listToTuple(AnyAssumptions, Assumptions),
+    %     InstanceDef = (Assumptions => InstanceDef1)
+    %     ;
+    %     InstanceDef = InstanceDef1),
+    compileStatement(InstanceDef, ['x'=X, 'u'=U | VNs]).
 
 deleteUnionBranches([Op1, Op2 | Options], X, (Branch1; Branches)) :-
     deleteUnionBranches([Op1], X, Branch1),
@@ -1367,8 +1378,10 @@ test(sumToList) :-
 
 :- end_tests(sum_to_list).
 
-enumerateVars(Var::_, N, N1) :-
+enumerateVars(Var::_Type, N, N1) :-
     var(Var),
+    % term_variables(Type, TypeVars),
+    % assignFakeTypes(TypeVars),
     N1 is N + 1,
     atom_number(Num, N),
     atom_concat('v', Num, Var).
@@ -1402,7 +1415,7 @@ test(polymorphic_lambda) :-
     reset_gensym(lambda),
     extractLambda('X'::T, 'X'::T+'X'::T, =, '->', '!',
         _StructDef, InstanceDef, _Replacement),
-    InstanceDef =@= (T1 : plus => instance lambda1 : (T1 -> T1) where {
+    InstanceDef =@= (T1 : plus => instance lambda1(T1) : (T1 -> T1) where {
         lambda1!('X'::T1) := ('X'::T1)+('X'::T1)
     }).
 
@@ -1438,7 +1451,7 @@ extractLambda(X, Y, TypeModifier, ClassName, MethodName,
     inferType(YAfterMacros, Ty, Assumptions),
     once(lambdaTypesAndArgs(X, YAfterMacros, Types, Args)),
     LambdaStructSig =.. [LambdaName | Types],
-    term_variables(Types, TypeVars),
+    term_variables([Types, Ty], TypeVars),
     LambdaStructType =.. [LambdaName | TypeVars],
     LambdaCons =.. [LambdaName | Args],
     filterMetAssumptions(Assumptions, NeededAssumptions),
@@ -1452,8 +1465,7 @@ extractLambda(X, Y, TypeModifier, ClassName, MethodName,
         listToTuple(NeededAssumptions, Context),
         InstanceDef = (Context => InstanceDef1)
         ;
-        InstanceDef = InstanceDef1),
-    writeln(InstanceDef).
+        InstanceDef = InstanceDef1).
 
 lambdaTypesAndArgs(X, Y, Types, ClosureVars) :-
     walk(Y, findVars, [], VarsInBody),
@@ -1541,6 +1553,10 @@ bindExpression(Statements, Bind, BindExpr) :-
         bindExpression(Rest, Bind, RestExpr)
         ;
         BindExpr = Statements.
+
+% createAnyAssumptions([], []).
+% createAnyAssumptions([TypeVar | TypeVars], [TypeVar : any | AnyAssumptions]) :-
+%     createAnyAssumptions(TypeVars, AnyAssumptions).
 
 % ============= Prelude =============
 :- compileStatement((class T : delete where { X : any => X del T -> X }),
