@@ -1,6 +1,13 @@
 # Comprehensive Sequence Example
 
-This example extends [a previous one](type-classes.md#sequence-example), but makes it more complete.
+This example should actually be part of Neutrino's standard library, once we build one...
+
+It defines the `seq` type class representing a sequence of things. A sequence supports two operations:
+
+1. An `empty` method that returns whether or not it is empty, and
+2. A `next` method which takes one element off the sequence and returns it along with a sequence of the rest of the elements.
+
+Sequences are a very powerful abstraction, which exists in many programming languages (see for example [iterators in Rust](https://doc.rust-lang.org/book/ch13-02-iterators.html)). They allow operations to be performed on a sequence, such as `map` or `filter`, while abstracting away the actual representation of the data. Sequences are lazy, allowing infinite sequences to exist and be processed, so long that we do not require the entire sequence.
 
 The following compiles successfully:
 
