@@ -36,12 +36,12 @@ Consider for example the following [lens](https://medium.com/@dtipson/functional
 The following compiles successfully:
 
 ```prolog
-T1 : any, F : (T1 -> T1), T2 : any =>
+F : (T1 -> T1) =>
 declare update_first((T1, T2), F) -> (T1, T2).
 
 update_first((X, Y), F) := (F!X, Y).
 
-T1 : any, T2 : any, F : (T2 -> T2) =>
+F : (T2 -> T2) =>
 declare update_second((T1, T2), F) -> (T1, T2).
 
 update_second((X, Y), F) := (X, F!Y).
@@ -52,12 +52,12 @@ assert update_second(update_first((2, 3), (N -> N - 1)), (N -> N + 1)) == (1, 4)
 As can be seen in the last line, it is very hard to reason upon such changes with Neutrino's core syntax. Pipeline expressions, introduced through the `>>` operator are intended to fix that. The same example is given below, this time using the `>>` operator on the insertion. It compiles successfully:
 
 ```prolog
-T1 : any, F : (T1 -> T1), T2 : any =>
+F : (T1 -> T1) =>
 declare update_first((T1, T2), F) -> (T1, T2).
 
 update_first((X, Y), F) := (F!X, Y).
 
-T1 : any, T2 : any, F : (T2 -> T2) =>
+F : (T2 -> T2) =>
 declare update_second((T1, T2), F) -> (T1, T2).
 
 update_second((X, Y), F) := (X, F!Y).

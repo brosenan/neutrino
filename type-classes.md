@@ -14,7 +14,7 @@ class T : named_type where {
 }.
 ```
 
-With such a definition in place, concrete types can be assigned as instances of the type class. For example, the type `int64` can be made an instance of `named_type` by implementing `type_name` to simply return the string `"int64"`. For `float64`, the method will return the string `"float64"`, etc.
+With such a definition in place, concrete types can be assigned as _instances_ of the type class. For example, the type `int64` can be made an instance of `named_type` by implementing `type_name` to simply return the string `"int64"`. For `float64`, the method will return the string `"float64"`, etc.
 
 The following compiles successfully:
 
@@ -40,7 +40,7 @@ assert type_name(3.0) == "float64".
 A type-class declaration of the form `class T:C where { Decls }` consists of three elements:
 
 1. The type-class name (`C`).
-2. A variable representing an instance of this type (`T`).
+2. A free variable representing an instance of this type (`T`).
 3. One or more function declarations (`Decls`), separated by semicolons (`;`), representing the methods.
 
 The instance type must be represented by a free variable, as it abstracts over all possible instances. Placing a concrete type in its place will trigger a compilation error.
@@ -55,7 +55,7 @@ class int64 : named_type where {
 Expected instance type to be a free variable in the declaration of class named_type. Found: int64.
 ```
 
-The declaration of each method must depend on `T`. `T` must appear in at least one of the parameters, and can possibly appear in the return type.
+The declaration of each method must depend on `T`. `T` must appear in at least one of the parameters, and can possibly appear in the return type. If `T` does not appear in the argument types of a method, when this method is called Neutrino cannot determine which implementation it needs to use.
 
 ```prolog
 class F : foo where {
@@ -84,9 +84,7 @@ instance int64 : foo where {
 Type class foo does not exist.
 ```
 
-An instance of a type-class must implement all methods declared by the type-class, in the same order.
-
-In the following example the instance is missing a method.
+An instance of a type-class must implement all methods declared by the type-class. In the following example the instance is missing a method.
 
 ```prolog
 class F : foo where {
@@ -120,6 +118,8 @@ instance int64 : foo where {
 ```error
 Expected method1/2 in instance int64 of class foo. Found method2/2.
 ```
+
+Note that the notation `name/number` used by this error message is borrowed from Prolog and represents the name and number of arguments to a method, which are both checked.
 
 Obviously, it is also illegal to provide too many methods.
 
@@ -239,25 +239,6 @@ declare foobar(T) -> T.
 foobar(X) := foo(bar(X)).
 ```
 
-### The `any` Class
-
-Sometimes we want a function to apply to any type whatsoever. Such a function cannot do much with the object (i.e., cannot call methods on it or destruct it to see its components), but it can move it around. It can return it, or forward it to other functions that can work on any type.
-
-To allow functions to abstract over any type, the `any` special class can be used. `any` has no methods, and every type is automatically an instance of it.
-
-In the following example we use `any` to define an all-type identity function. It compiles successfully:
-
-```prolog
-T : any =>
-declare identity(T) -> T.
-
-identity(X) := X.
-
-assert identity(3) == 3.
-assert identity(3.0) == 3.0.
-assert identity("hello") == "hello".
-```
-
 ### Polymorphic Methods
 
 Like regular functions, we sometimes wish type-class methods to be polymorphic as well, with regard to types other than the type-class instance.
@@ -268,7 +249,6 @@ The following compiles successfully:
 
 ```prolog
 class F : foo where {
-    T : any =>
     foo(F, T) -> F, T
 }.
 

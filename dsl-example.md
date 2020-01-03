@@ -51,12 +51,10 @@ T1 : any, T2 : any, F : (T1 -> T2) =>
 declare let(T1, F) -> T2.
 let(V, Fn) := Fn!V.
 
-T : any =>
 instance expr(T) : plus where {
   A+B := plus(A, B)			   
 }.
 
-T : any =>
 instance expr(T) : minus where {
   A-B := minus(A, B)			   
 }.
@@ -72,7 +70,6 @@ A\/B := if(A, true, B).
 A/\B := if(A, B, false).
 
 
-T : any =>
 declare depends_on(&expr(T), &string) -> bool.
 depends_on(Expr, Var) := case Expr of & {
     c(_) => false;

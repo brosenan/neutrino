@@ -17,7 +17,6 @@ class P : proc(T, Err) where {
 
 struct return(T) = T.
 
-T : any =>
 instance return(T) : proc(T, _) where {
     run(return(Ret), IO) := (ok(Ret), IO)
 }.

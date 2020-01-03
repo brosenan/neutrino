@@ -1,10 +1,8 @@
-T:any =>
 class S:sequence(T) where {
     empty(&S) -> bool;
     destruct(S) -> maybe((T, S))
 }.
 
-T:any =>
 instance list(T):sequence(T) where {
     empty(L) := case L of {
         [] => true;
@@ -18,7 +16,7 @@ instance list(T):sequence(T) where {
 
 struct map_seq(S, F) = S*F.
 
-T1:any, S1:seq(T1), T2:any, F:T1&->T2 =>
+S1:seq(T1), F:T1&->T2 =>
 instance map_seq(S1, F) : seq(T2) where {
     empty(map_seq(S, _)) := empty(S);
     destruct(map_seq(S, F)) := case destruct(S) of {

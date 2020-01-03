@@ -81,7 +81,7 @@ The `@>` class defines one method, the `@` operator, which instead of consuming 
 In the following example we define a polymorphic `map_list` function, which applies the given lambda on every element of a list. It consumes one list and generates another in return. It compiles successfully:
 
 ```prolog
-T1 : any, T1 : any, F : (T1 @> T2), F : delete =>
+F : (T1 @> T2), F : delete =>
 declare map_list(list(T1), F) -> list(T2).
 
 map_list(L, F) := case L of {

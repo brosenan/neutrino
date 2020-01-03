@@ -292,7 +292,7 @@ constant_propagation(strlen(S), Len) :- string_length(S, Len).
 type_signature(strcat, [string, string], string, []).
 constant_propagation(strcat(S1, S2), S) :- string_concat(S1, S2, S).
 
-type_signature(delete_string, [string, T], T, [T:any]).
+type_signature(delete_string, [string, T], T, []).
 constant_propagation(delete_string(_, X), X).
 
 inferTypes([], [], []).
@@ -717,7 +717,7 @@ test(case) :-
                          assign(V1::bool, Val)],
                        [destruct(X::foobar1,bar1,[Y::float64]),
                         literal(0,Dummy::int64),
-                        call(del,[Dummy::int64,Y::float64],[float64:delete,int64:any],_),
+                        call(del,[Dummy::int64,Y::float64],[float64:delete],_),
                         construct(false,[],V2::bool),
                          assign(V2::bool, Val)]])]).
 
@@ -804,7 +804,7 @@ test(struct) :-
     (Args, Asm) =@= ([X], [destruct(X, ',', [_::int64, Y::string]),
                            literal(0, Dummy::int64),
                            call(del, [Dummy::int64, Y::string], 
-                                     [string:delete, int64:any], _)]).
+                                     [string:delete], _)]).
 
 :- end_tests(destructAssemblies).
 
@@ -814,7 +814,7 @@ destructAssemblies([Var::Type | Args], [X::Type | DestArgs], AsmIn, AsmOut) :-
     Var == '_' ->
         destructAssemblies(Args, DestArgs,
             [literal(0, Dummy::int64),
-            call(del, [Dummy::int64, X::Type], [Type:delete, int64:any], _) 
+            call(del, [Dummy::int64, X::Type], [Type:delete], _) 
             | AsmIn], AsmOut)
         ;
         Var = X,
@@ -1283,8 +1283,6 @@ selectAsmBranch([[DestructCmd | RestOfFirstBranch] | Branches], Branch) :-
         ;
         selectAsmBranch(Branches, Branch).
 
-class_instance(_, any, []).
-
 validateDecls((Decl1; Decl2), Ctx) :-
     validateDecls(Decl1, Ctx),
     validateDecls(Decl2, Ctx).
@@ -1560,7 +1558,7 @@ assertAssumptions([T:C | Assumptions]) :-
     assertAssumptions(Assumptions).
 
 % ============= Prelude =============
-:- compileStatement((class T : delete where { X : any => X del T -> X }),
+:- compileStatement((class T : delete where { X del T -> X }),
     ['T'=T, 'X'=X]).
 :- compileStatement((union bool = true + false), []).
 :- compileStatement((union list(T) = [] + [T | list(T)]), ['T'=T]).
@@ -1584,7 +1582,7 @@ assertAssumptions([T:C | Assumptions]) :-
     ['X'=X, 'N'=N]).
 :- compileStatement((instance string : delete where 
     { X del S := delete_string(S, X) }), ['X'=X, 'S'=S]).
-:- compileStatement((T1 : any, T2 : any => class F:(T1->T2) where { F!T1 -> T2 }),
+:- compileStatement((class F:(T1->T2) where { F!T1 -> T2 }),
     ['T1'=T1, 'T2'=T2, 'F'=F]).
-:- compileStatement((T1 : any, T2 : any => class F:(T1@>T2) where { &F@T1 -> T2 }),
+:- compileStatement((class F:(T1@>T2) where { &F@T1 -> T2 }),
     ['T1'=T1, 'T2'=T2, 'F'=F]).

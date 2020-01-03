@@ -6,7 +6,6 @@ The following compiles successfully:
 
 ```prolog
 % A generic sequence.
-T : any =>
 class S : seq(T) where {
     % Is this sequence empty? Does not consume the sequence to check.
     empty(&S) -> bool;
@@ -22,7 +21,6 @@ instance int64 : seq(int64) where {
 }.
 
 % A list is a sequence.
-T : any =>
 instance list(T) : seq(T) where {
     empty(L) := case L of & {
         [] => true;
