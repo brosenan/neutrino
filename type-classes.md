@@ -277,9 +277,13 @@ declare foo(T1) -> T2.
 Type variable T2 cannot be inferred in this context.
 ```
 
-The inference of types in a declaration can either be direct (i.e., the type variables in the return type also appear in the argument types), or indirect through [parametric classes](#parametric-classes).
+### Parametric Classes as Type Relations
 
-Consider class `c` which takes a type parameter. The declaration `T1 : c(T2)` defines a relationship between types `T1` and `T2`. This relationship can be stated as _for any type `T1` there exists type `T2` such that `T1` is an instance of `c(T2)`_. Instance definitions for class `c` must then make sure this assertion holds. For example, the following instance definition does not compile because it does not specify `T2`.
+The inference of types in a declaration can either be direct (i.e., the type variables in the return type also appear in the argument types), or indirect through _parametric classes_.
+
+If we consider a regular (non-parametric) type-class to be a _set_ of types, a parametric class can be seen as a [relation](https://en.wikipedia.org/wiki/Finitary_relation) between types.
+
+Consider class `c` which takes a type parameter. The term `T1 : c(T2)` defines a relationship between types `T1` and `T2`. This relationship can be stated as _for any type `T1` there exists type `T2` such that `T1` is an instance of `c(T2)`_. Instance definitions for class `c` must then make sure this assertion holds. For example, the following instance definition does not compile because it does not specify `T2`.
 
 ```prolog
 class T1 : c(T2) where {
@@ -341,7 +345,7 @@ declare bar(T1) -> T2.
 Type variable X cannot be inferred in this context.
 ```
 
-Inference is done in a chain. The following compiles successfully:
+Inference is done in a chain, from left to right. The following compiles successfully:
 
 ```prolog
 class X : c(Y) where {
@@ -352,6 +356,24 @@ X : c(Y), Y : c(Z) =>
 declare bar(X) -> Z.
 
 bar(X) := foo(foo(X)).
+```
+
+But this does not:
+
+```prolog
+class X : c(Y) where {
+    foo(X) -> Y
+}.
+
+% We switched the order.
+Y : c(Z), X : c(Y) =>
+declare bar(X) -> Z.
+
+bar(X) := foo(foo(X)).
+```
+
+```error
+Type variable Y cannot be inferred in this context.
 ```
 
 ### Type Inference in Function Bodies
@@ -368,91 +390,25 @@ identity_plus_1(X) := X + 1.
 Type mismatch. Expression X::int64 expected to be unknown_type12, inferred: int64.
 ```
 
-## Parametric Classes
-
-Type classes can take type parameters. With these parameters, the type class represents a relation between types. For example, in the [sequence example below](#sequence-example) the term `S : seq(T)` represents a relation between the sequence type `S` and the type of the elements it contains, `T`. 
-
-### Sequence Example
-
-In the following example we define a type-class named `seq(T)`, where `T` could be any type. A type in this class must implement `next`, which returns either `element(Head, Tail)`, with `Head` being the first element in the sequence and `Tail` being the rest of the sequence, or `empty` if the sequence has no members.
-
-We implement two instances. `list(T)` provides a sequence of the elements in the list, and `int64` which represents the integers from the given one upwards.
-
-The following example compiles successfully:
+Similarly, when a type is inferred via a class it is also generalized.
 
 ```prolog
-class S : seq(T) where {
-    next(S) -> maybe((T, S))
+class X : c(Y) where {
+    foo(X) -> Y
 }.
 
-instance list(T) : seq(T) where {
-    next(L) := case L of {
-        [] => none;
-        [First | Rest] => just((First, Rest))
-    }
-}.
+X : c(Y), Y : c(Z) =>
+declare foo_foo_plus_1(X) -> Z.
 
-instance int64 : seq(int64) where {
-    next(N) := just((N, N+1))
-}.
-
-S : seq(T) =>
-declare nth(S, int64) -> maybe(T).
-
-nth(Seq, Index) := case (Index == 0) of {
-    true => case next(Seq) of {
-        just((First, _)) => just(First);
-        none => none
-    };
-    false => case next(Seq) of {
-        just((_, Next)) => nth(Next, Index-1);
-        none => none
-    }
-}.
-
-assert case nth(2, 4) of {
-    just(X) => X == 6;
-    none => false
-}.
-
-assert case nth([1, 2, 3, 4], 2) of {
-    just(X) => X == 3;
-    none => false
-}.
-```
-### Generality of Parameter Types
-
-In the above example, `nth` is a polymorphic function which takes a sequence and an index and returns the nth element in the sequence if such exists (or `none` if such does not exist).
-
-Note that in `nth`'s declaration, `T` appears as a free variable, in the sense that we do not constrain it to any type-class (unlike `S`, which is bound to `seq(T)`). Thus, the definition of such a function cannot assume anything on type `T`. For example, adding 1 to the returned value will not compile:
-
-```prolog
-class S : seq(T) where {
-    next(S) -> maybe((T, S))
-}.
-
-S : seq(T) =>
-declare nth(S, int64) -> maybe(T).
-
-nth(Seq, Index) := case (Index == 0) of {
-    true => case next(Seq) of {
-        just((First, _)) => just(First+1); % Added 1 here
-        none => none
-    };
-    false => case next(Seq) of {
-        just((_, Next)) => nth(Next, Index-1);
-        none => none
-    }
-}.
+foo_foo_plus_1(X) := foo(foo(X)) + 1.
 ```
 
 ```error
-expected to be maybe(unknown_type13), inferred: maybe(int64).
+Type mismatch. Expression foo(foo(X::unknown_type12))+1 expected to be unknown_type14, inferred: int64.
 ```
-
 ## Polymorphic Instance Definitions
 
-Unlike a [monomorphic instance definition](#simple-instance-definitions), which define a single concrete type as an instance, a polymorphic instance definition defines a family of types as instances of a class. For example, the instance definition for `list(T)` in the above [sequence example](#sequence-example) is a polymorphic instance definition, because it abstracts over all element types (the different values `T` can take) and provides method definitions as polymorphic functions.
+Unlike a [monomorphic instance definition](#simple-instance-definitions), which define a single concrete type as an instance, a polymorphic instance definition defines a family of types as instances of a class. For example, the instance definition for `list(T)` in our [sequence example](sequence-example.md) is a polymorphic instance definition, because it abstracts over all element types (the different values `T` can take) and provides method definitions as polymorphic functions.
 
 In the sequence example, `T` was just a type. We did not make any assumption on what it was. A list of things became a sequence of things. However, sometimes we need to make such assumptions.
 
@@ -483,9 +439,11 @@ assert type_name([]) == "nil".
 
 ## Built-In Type Classes
 
-The `any` class mentioned [above](#the-any-class) is a built-in class, defined by Neutrino. Here we discuss other such languages.
+Neutrino defines a few type classes by itself, and assigns types to them automatically.
 
 ### The `delete` Class
+
+Recall that Neutrino is [linearly-typed](simple-functions.md#linear-typing). This means that by default, every value must be used _exactly once_ in a function. But what do we do when we are done with an object? As discussed in the [simple functions](simple_functions.md) doc, we use underscore (`_`) to tell Neutrino we are not interested in it. Under the hood, Neutrino makes a call to the `del` operator to delete these values and reclaim their space. The `del` operator (which can also be called explicitly when needed), is a method of the `delete` class.
 
 Neutrino automatically defines every struct and union type as instances of the `delete` class.
 
@@ -501,7 +459,7 @@ assert (3.14 del bar1("hello", 42)) == 3.14.
 
 ### The `basic_type` Class
 
-Basic types are types that do not need to adhere to the rules of linear typing. Instances of this class can be used zero or more times in a function, with no restrictions. Neutrino automatically assigns eligible types to this class. Programmers cannot do so themselves.
+Basic types are types that do not need to adhere to the rules of linear typing. Instances of this class can be used zero or more times in a function, with no restrictions. Neutrino automatically assigns eligible types to this class. Programmers _cannot_ do so themselves.
 
 
 ```prolog
