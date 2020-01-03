@@ -1586,3 +1586,6 @@ assertAssumptions([T:C | Assumptions]) :-
     ['T1'=T1, 'T2'=T2, 'F'=F]).
 :- compileStatement((class F:(T1@>T2) where { &F@T1 -> T2 }),
     ['T1'=T1, 'T2'=T2, 'F'=F]).
+:- compileStatement((F : (T1 -> T2) => declare let(T1, F) -> T2),
+    ['T1'=T1, 'T2'=T2, 'F'=F]).
+:- compileStatement((let(V, Fn) := Fn!V), ['V'=V, 'Fn'=Fn]).

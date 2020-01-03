@@ -12,7 +12,8 @@ md_files="simple-expressions.md \
           refs.md \
           lambdas.md \
           syntactic-sugar.md \
-          sequence-example.md"
+          sequence-example.md \
+          dsl-example.md"
 
 $this_dir/swipl -f $this_dir/neutrino.pl -t run_tests
 

@@ -85,6 +85,7 @@ What I want to achieve with Neutrino is the ability to:
 # Example Programs
 
 * [Sequence Example](sequence-example.md)
+* [DSL Example](dsl-example.md)
 
 ## Status
 
