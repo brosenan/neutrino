@@ -1,3 +1,4 @@
 test*.pl
 *.pyc
 *~
+.bash_history

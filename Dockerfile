@@ -1,7 +1,7 @@
 FROM swipl
 
 RUN apt-get update
-RUN apt-get install -y python3 clang
+RUN apt-get install -y python3 clang git
 
 ARG USER_NAME=user
 ARG USER_HOME=/home/user
@@ -15,7 +15,5 @@ RUN adduser \
   --gecos "$USER_GECOS" \
   --disabled-password \
   "$USER_NAME"
-
-RUN apt-get install -y procps
 
 WORKDIR /home/user
