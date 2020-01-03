@@ -82,7 +82,7 @@ What I want to achieve with Neutrino is the ability to:
 2. Compile DSL programs to native code using partial evaluation.
 3. Allow the native code to be as low-level as possible, by using linear types.
 
-# Example Programs
+## Example Programs
 
 * [Sequence Example](sequence-example.md)
 * [DSL Example](dsl-example.md)
