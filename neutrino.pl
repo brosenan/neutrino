@@ -136,7 +136,6 @@ compileStatement((instance T:C where {Defs}), VNs, Context) :-
     !nameVars(VNs),
     checkTypeFlow(T, Context, C),
     !validateInstance(Decls, Defs, T, C),
-    saturateTypes(Context),
     compileMethods(Defs, ClassContext).
 
 compileStatement((class T:C where {Decls}), VNs, Context) :-
@@ -347,7 +346,7 @@ validateType(T) :-
 
 type(Type) :- basicType(Type).
 type(string).
-type(_::type).
+type(_::type(_)).
 
 basicType(T) :- class_instance(T, basic_type, _).
 
@@ -383,7 +382,7 @@ verifyTypeVariables([Arg | Args]) :-
 
 verifyTypeVariable(Name::Kind) :-
     var(Kind) ->
-        Kind = type
+        Kind = type(_)
         ;
         throw(double_use_of_var(Name)).
 
@@ -1002,18 +1001,6 @@ tupleToList(Tuple, List) :-
         ;
         List = [Tuple].
 
-saturateTypes([]).
-saturateTypes([T:C | Rest]) :-
-    (var(T) ->
-        assignFakeTypes([T])
-        ;
-        true),
-    (fake_type(T) ->
-        assert(class_instance(T, C, []))
-        ;
-        true),
-    saturateTypes(Rest).
-
 fake_type(Name::_) :-
     atom(Name).
 
@@ -1037,7 +1024,6 @@ checkAssumptions([T:C | Rest]) :-
             ;
             throw(type_not_instance(T, C)).
 
-% TODO: Check the class's underlying assumptions.
 checkAssumption(T:C) :-
     class_instance(T, C, Context),
     checkAssumptions(Context).
@@ -1356,13 +1342,6 @@ compileUnionDeleteInstance(Union, OptionList, VNs) :-
             Branches
         }
     }),
-    % term_variables(Union1, TypeVars),
-    % createAnyAssumptions(TypeVars, AnyAssumptions),
-    % (AnyAssumptions = [_ | _] ->
-    %     listToTuple(AnyAssumptions, Assumptions),
-    %     InstanceDef = (Assumptions => InstanceDef1)
-    %     ;
-    %     InstanceDef = InstanceDef1),
     compileStatement(InstanceDef, ['x'=X, 'u'=U | VNs]).
 
 deleteUnionBranches([Op1, Op2 | Options], X, (Branch1; Branches)) :-
@@ -1386,8 +1365,6 @@ test(sumToList) :-
 
 enumerateVars(Var::_Type, N, N1) :-
     var(Var),
-    % term_variables(Type, TypeVars),
-    % assignFakeTypes(TypeVars),
     N1 is N + 1,
     atom_number(Num, N),
     atom_concat('v', Num, Var).
@@ -1566,10 +1543,11 @@ checkTypeFlow(Func, Context, Type) :-
     checkAssumptionFlow(Context, VarsInFunc, VarsInFuncAndContext),
     walk(Type, checkTypeVarsOnlyIn(VarsInFuncAndContext), [], _).
 
-collectTypeVars(Var::type, Vars, [Var | Vars]) :-
-    atom(Var).
+collectTypeVars(Var::type(Unique), Vars, [Var | Vars]) :-
+    atom(Var),
+    gensym(unique, Unique).
 
-checkTypeVarsOnlyIn(VarsInFunc, Var::type, State, State) :-
+checkTypeVarsOnlyIn(VarsInFunc, Var::type(_), State, State) :-
     atom(Var),
     \+member(Var, VarsInFunc),
     throw(type_cannot_be_inferred(Var)).
@@ -1593,7 +1571,8 @@ assertAssumptions([T:C | Assumptions]) :-
         saturateTypeVars(CVars),
         assert(class_instance(T, C, []))
         ;
-        true),
+        !class_instance(T, C, InstanceAssumptions),
+        assertAssumptions(InstanceAssumptions)),
     assertAssumptions(Assumptions).
 
 % ============= Prelude =============
