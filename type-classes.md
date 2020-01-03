@@ -65,7 +65,7 @@ class F : foo where {
 ```
 
 ```error
-Method method2 does not depend on the instance type in the declaration of class foo.
+Type variable F cannot be inferred in this context.
 ```
 
 ## Simple Instance Definitions

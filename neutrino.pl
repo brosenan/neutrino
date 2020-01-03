@@ -145,7 +145,6 @@ compileStatement((class T:C where {Decls}), VNs, Context) :-
         true
         ;
         throw(instance_type_not_var_in_class_decl(T, C))),
-    !validateClassDecls(Decls, C, T),
     !declareClassFunctions(Decls, ClassCtx, VNs).
 
 compileFunctionDefinition((Func := Body), TypeContext) :-
@@ -969,21 +968,6 @@ validateInstance((Func -> _Type), Defs, T, C) :-
             throw(method_mismatch(DeclName/DeclArity, DefName/DefArity, T, C)))
         ;
         throw(too_many_methods(T, C)).
-
-validateClassDecls((_ => Decl), C, T) :-
-    validateClassDecls(Decl, C, T).
-
-validateClassDecls((Decl1; Decl2), C, T) :-
-    validateClassDecls(Decl1, C, T),
-    validateClassDecls(Decl2, C, T).
-
-validateClassDecls((Func -> _), C, T) :-
-    term_variables(Func, Vars),
-    \+((member(Var, Vars), Var == T)) ->
-        functor(Func, Name, _),
-        throw(method_does_not_depend_on_instance_type(Name, C))
-        ;
-        true.
 
 compileMethods((Method1; Method2), Ctx) :-
     compileMethods(Method1, Ctx),
