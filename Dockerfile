@@ -1,7 +1,7 @@
 FROM swipl
 
 RUN apt-get update
-RUN apt-get install -y python3 clang git
+RUN apt-get install -y python3 clang git procps
 
 ARG USER_NAME=user
 ARG USER_HOME=/home/user

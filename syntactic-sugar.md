@@ -111,7 +111,7 @@ In this example the bind operator applies the given function if the value is `Ju
 Neutrino's concept of type classes is a bit different from Haskell's, so higher-order classes cannot be defined. For this reason we cannot define a type class named `monad` and give it a bind method, like they did in Haskell. However, monad-like code can still be written in Neutrino. Consider the Maybe monad described above. In Neutrino, the bind operator can be defined as follows. The following compiles successfully:
 
 ```prolog
-T1 : any, T2 : any, F : (T1 -> maybe(T2)), F : delete =>
+F : (T1 -> maybe(T2)), F : delete =>
 declare bind_maybe(maybe(T1), F) -> maybe(T2).
 
 bind_maybe(X, Fn) := case X of {
@@ -128,7 +128,7 @@ With the use of the `>>` operator, this code is relatively readable. However, we
 Because there is no single class named `monad`, we do not have a single keyword similar to Haskell's `do` keyword. Instead, the `<< {}` operator takes on its left hand the name of the bind function to be used. The following is the above example converted to this notation. It compiles successfully:
 
 ```prolog
-T1 : any, T2 : any, F : (T1 -> maybe(T2)), F : delete =>
+F : (T1 -> maybe(T2)), F : delete =>
 declare bind_maybe(maybe(T1), F) -> maybe(T2).
 
 bind_maybe(X, Fn) := case X of {

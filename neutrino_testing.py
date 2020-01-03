@@ -57,8 +57,8 @@ class FailureTest:
         result = subprocess.run(["%s/swipl" % os.getcwd(), "-f", "neutrino.pl", 
                                  "-t", "run('%s')" % self.test_file], stderr=subprocess.PIPE)
         if result.returncode == 0:
-            print("%s###%s Expected compilation to fail but it succeeded.\nCode: %s" % 
-                (RED, NO_COLOR, self.code))
+            print("%s###%s Expected compilation to fail with message '%s' but it succeeded.\nCode: %s" % 
+                (RED, NO_COLOR, self.error, self.code))
             return False
         elif self.error not in str(result.stderr):
             print("%s###%s Compilation error should contain the string '%s' but does not.\nCode: %s\nOutput: %s"

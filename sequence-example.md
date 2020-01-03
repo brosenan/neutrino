@@ -35,7 +35,7 @@ instance list(T) : seq(T) where {
 }.
 
 % Fetch the nth element of a sequence. It consumes the sequence in the process.
-T : any, S : seq(T) =>
+S : seq(T) =>
 declare nth(S, int64) -> maybe(T).
 
 nth(Seq, Index) := if(Index == 0,
@@ -52,7 +52,7 @@ nth(Seq, Index) := if(Index == 0,
 % a sequence.
 struct map(S, F) = map(S, F).
 
-T1 : any, S : seq(T1), T2 : any, F : (T1 @> T2), F : delete =>
+S : seq(T1), F : (T1 @> T2), F : delete =>
 instance map(S, F) : seq(T2) where {
     % The map is empty if the underlying sequence is empty.
     empty(&map(Seq, Fn)) := empty(Seq);
@@ -69,13 +69,13 @@ assert [1, 2, 3] >> map(N @> N + 2) >> nth(1) == just(4).
 % Like map, filter is also a struct which is an instance of seq.
 struct filter(S, F) = filter(S, F).
 
-T : delete, S : seq(T), F : (&T @> bool), F : delete =>
+S : seq(T), T : delete, F : (&T @> bool), F : delete =>
 instance filter(S, F) : seq(T) where {
     empty(&filter(Seq, Fn)) := empty(Seq);
     next(filter(Seq, Fn)) := case next(Seq) of {
         just((Head, Tail)) => if(&Fn@(&Head),
-                                just((Head, filter(Tail, Fn))),
-                                next(filter(Tail, Fn) del Head));
+                                 just((Head, filter(Tail, Fn))),
+                                 next(filter(Tail, Fn) del Head));
         none => none del Fn
     }
 }.
@@ -87,10 +87,10 @@ assert [1, 2, 3] >> filter(N @> *N == 2) >> nth(0) == just(2).
 % calls the function last_or on the rest of the sequence with the first element as
 % default. last_or returns the last element of a non-empty sequence, or the give default
 % for an empty sequence. 
-T : delete, S : seq(T) =>
+S : seq(T), T : delete =>
 declare last(S) -> maybe(T).
 
-T : delete, S : seq(T) =>
+S : seq(T), T : delete =>
 declare last_or(S, T) -> T.
 
 last(Seq) := case next(Seq) of {

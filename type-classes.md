@@ -200,7 +200,7 @@ greet_type(Greeting, Obj) := Greeting + ", " + Obj.
 ```
 
 ```error
-Expression Obj::string expected to be unknown_type8, inferred: string.
+Type mismatch. Expression Obj::string expected to be unknown_type12, inferred: string.
 ```
 
 When calling a polymorphic function, the compiler checks the assumptions hold for the given types. For example, if we call `greet_type` on a `float64` without first defining `float64` as an instance of `named_type`, we get a compilation error.
@@ -277,16 +277,115 @@ instance int64 : foo  where {
 }.
 ```
 
-Type variables used in polymorphic methods need to be declared, as in the above example. Failing to do so results in a compilation error.
+## Type Inference
+
+The declaration of a polymorphic function may include type variables to describe both the types of the arguments and the return type. However, the return type must be _inferable_ from the argument types.
+
+The following compiles successfully:
 
 ```prolog
-class F : foo where {
-    foo(F, T) -> F, T
+declare identity(T) -> T.
+```
+
+But the following does not.
+
+```prolog
+declare foo(T1) -> T2.
+```
+
+```error
+Type variable T2 cannot be inferred in this context.
+```
+
+The inference of types in a declaration can either be direct (i.e., the type variables in the return type also appear in the argument types), or indirect through [parametric classes](#parametric-classes).
+
+Consider class `c` which takes a type parameter. The declaration `T1 : c(T2)` defines a relationship between types `T1` and `T2`. This relationship can be stated as _for any type `T1` there exists type `T2` such that `T1` is an instance of `c(T2)`_. Instance definitions for class `c` must then make sure this assertion holds. For example, the following instance definition does not compile because it does not specify `T2`.
+
+```prolog
+class T1 : c(T2) where {
+    foo(T1) -> bool
+}.
+
+instance int64 : c(T2) where {
+    foo(N) := N == 42
 }.
 ```
 
 ```error
-Type variable T has not been declared in this context.
+Type variable T2 cannot be inferred in this context.
+```
+
+But this compiles successfully:
+
+```prolog
+class T1 : c(T2) where {
+    foo(T1) -> bool
+}.
+
+instance int64 : c(float64) where {
+    foo(N) := N == 42
+}.
+
+instance list(T) : c(T) where {
+    foo(_) := false
+}.
+```
+
+Because instances specify their corresponding classes completely, function declarations can rely on them to infer their return types. Inference works from instance to class. For example, the following compiles successfully:
+
+```prolog
+class T1 : c(T2) where {
+    foo(T1) -> T2
+}.
+
+T1 : c(T2) =>
+declare bar(T1) -> T2.
+
+bar(X) := foo(X).
+```
+
+In the above example type `T2` for function `bar` (and in fact for method `foo` as well) does not appear in the argument types, but can be inferred from `T1` through class `c`.
+
+For an assumption of the form `T : C` to be valid (and infer the type variables in `C`), all variables in `T` must be known before this assumption is being evaluated. For example, the following code does not compile because `X` cannot be inferred from the argument types.
+
+```prolog
+class T1 : c(T2) where {
+    foo(T1) -> T2
+}.
+
+X : c(T2) =>
+declare bar(T1) -> T2.
+```
+
+```error
+Type variable X cannot be inferred in this context.
+```
+
+Inference is done in a chain. The following compiles successfully:
+
+```prolog
+class X : c(Y) where {
+    foo(X) -> Y
+}.
+
+X : c(Y), Y : c(Z) =>
+declare bar(X) -> Z.
+
+bar(X) := foo(foo(X)).
+```
+
+### Type Inference in Function Bodies
+
+The body of a polymorphic function must be general enough so that it would work correctly regardless of the actual type with which it is invoked. Consider a change to the `identity` function defined in one of the previous examples. Consider we would like to add 1 to the result. Such a definition will fail to compile because adding 1 assumes the argument type is `int64` (the type of the value 1), while the function is supposed to work with any input type.
+
+```prolog
+declare identity_plus_1(T) -> T.
+
+identity_plus_1(X) := X + 1.
+```
+
+```error
+Type mismatch. Expression X::int64 expected to be unknown_type12, inferred: int64.
 ```
 
 ## Parametric Classes
@@ -302,7 +401,6 @@ We implement two instances. `list(T)` provides a sequence of the elements in the
 The following example compiles successfully:
 
 ```prolog
-T : any =>
 class S : seq(T) where {
     next(S) -> maybe((T, S))
 }.
@@ -318,7 +416,7 @@ instance int64 : seq(int64) where {
     next(N) := just((N, N+1))
 }.
 
-T : any, S : seq(T) =>
+S : seq(T) =>
 declare nth(S, int64) -> maybe(T).
 
 nth(Seq, Index) := case (Index == 0) of {
@@ -342,19 +440,6 @@ assert case nth([1, 2, 3, 4], 2) of {
     none => false
 }.
 ```
-
-Note that we declared type `T` as `any` as an assumption for class `seq(T)`. Had we omitted this declaration, we would have received an error message:
-
-```prolog
-class S : seq(T) where {
-    next(S) -> maybe((T, S))
-}.
-```
-
-```error
-Type variable T has not been declared in this context.
-```
-
 ### Generality of Parameter Types
 
 In the above example, `nth` is a polymorphic function which takes a sequence and an index and returns the nth element in the sequence if such exists (or `none` if such does not exist).
@@ -362,12 +447,11 @@ In the above example, `nth` is a polymorphic function which takes a sequence and
 Note that in `nth`'s declaration, `T` appears as a free variable, in the sense that we do not constrain it to any type-class (unlike `S`, which is bound to `seq(T)`). Thus, the definition of such a function cannot assume anything on type `T`. For example, adding 1 to the returned value will not compile:
 
 ```prolog
-T : any =>
 class S : seq(T) where {
     next(S) -> maybe((T, S))
 }.
 
-T : any, S : seq(T) =>
+S : seq(T) =>
 declare nth(S, int64) -> maybe(T).
 
 nth(Seq, Index) := case (Index == 0) of {
@@ -383,7 +467,7 @@ nth(Seq, Index) := case (Index == 0) of {
 ```
 
 ```error
-expected to be maybe(unknown_type8), inferred: maybe(int64).
+expected to be maybe(unknown_type13), inferred: maybe(int64).
 ```
 
 ## Polymorphic Instance Definitions

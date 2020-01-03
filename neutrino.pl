@@ -112,7 +112,7 @@ compileStatement((struct Type = Constructor), VNs) :-
     validateTypes(ConsArgs).
 
 compileStatement((class T:C where {Decls}), VNs) :-
-    compileStatement((class T:C where {Decls}), VNs, []).
+    !compileStatement((class T:C where {Decls}), VNs, []).
 
 compileStatement((instance T:C where {Defs}), VNs) :-
     compileStatement((instance T:C where {Defs}), VNs, []).
@@ -121,9 +121,11 @@ compileStatement((Context => Statement), VNs) :-
     tupleToList(Context, ContextAsList),
     compileStatement(Statement, VNs, ContextAsList).
 
-compileStatement((declare Func -> Type), _VNs, Context) :-
+compileStatement((declare Func -> Type), VNs, Context) :-
     Func =.. [Name | ArgTypes],
-    assert(type_signature(Name, ArgTypes, Type, Context)).
+    assert(type_signature(Name, ArgTypes, Type, Context)),
+    nameVars(VNs),
+    checkTypeFlow(Func, Context, Type).
 
 compileStatement((instance T:C where {Defs}), VNs, Context) :-
     (type_class(C, T, Decls, ClassContext) ->
@@ -132,21 +134,20 @@ compileStatement((instance T:C where {Defs}), VNs, Context) :-
         throw(type_class_does_not_exist(C))),
     assert(class_instance(T, C, Context)),
     !nameVars(VNs),
+    checkTypeFlow(T, Context, C),
     !validateInstance(Decls, Defs, T, C),
     saturateTypes(Context),
     compileMethods(Defs, ClassContext).
 
 compileStatement((class T:C where {Decls}), VNs, Context) :-
     ClassCtx = [T:C | Context],
-    declareClassFunctions(Decls, ClassCtx),
     assert(type_class(C, T, Decls, ClassCtx)),
     (var(T) ->
         true
         ;
         throw(instance_type_not_var_in_class_decl(T, C))),
-    validateClassDecls(Decls, C, T),
-    nameVars(VNs),
-    validateDecls(Decls, ClassCtx).
+    !validateClassDecls(Decls, C, T),
+    !declareClassFunctions(Decls, ClassCtx, VNs).
 
 compileFunctionDefinition((Func := Body), TypeContext) :-
     walk(Func, replaceSingletosWithDelete, [], _),
@@ -157,7 +158,9 @@ compileFunctionDefinition((Func := Body), TypeContext) :-
     validateLValues(Args, ArgTypes),
     sameLength(ArgTypes, SigArgTypes),
     (type_signature(Name, SigArgTypes, SigType, TypeContext) ->
-        !saturateTypes(TypeContext),
+        term_variables(SigArgTypes, SigArgTypeVars),
+        saturateTypeVars(SigArgTypeVars),
+        assertAssumptions(TypeContext),
         matchTypes(ArgTypes, SigArgTypes, Args),
         matchType(Type, SigType, BodyAfterMacros),
         checkAssumptions(BodyAssumptions),
@@ -173,6 +176,7 @@ compileFunctionDefinition((Func := Body), TypeContext) :-
     !linearityCheck(Asm, Result, VarState1, _),
     unnameVars((TypeContext, DestArgs, Asm, Result), 
                (UnTypeContext, UnArgs, UnAsm, UnResult), _),
+%    writeln(function_impl(Name, UnTypeContext, UnArgs, UnAsm, UnResult)),
     assert(function_impl(Name, UnTypeContext, UnArgs, UnAsm, UnResult)).
 
 inferType(Term, Type, Assumptions) :-
@@ -257,6 +261,8 @@ formatError(assertion_failed(Result, Residual),
      ". Redsidual code: ", Residual]).
 formatError(type_var_not_declared(Type),
     ["Type variable ", Type, " has not been declared in this context."]).
+formatError(type_cannot_be_inferred(Var),
+    ["Type variable ", Var, " cannot be inferred in this context."]).
 
 writeln_list(S, [First | Rest]) :-
     write(S, First),
@@ -929,18 +935,18 @@ unlendVars([Key=StateIn | StatesIn], [Key=StateOut | StatesOut]) :-
         StateOut = StateIn),
     unlendVars(StatesIn, StatesOut).
 
-declareClassFunctions((ContextTuple => Decl), TypeContext) :-
+declareClassFunctions((ContextTuple => Decl), TypeContext, VNs) :-
     tupleToList(ContextTuple, ContextAsList),
     append(TypeContext, ContextAsList, FullContext),
-    declareClassFunctions(Decl, FullContext).
+    declareClassFunctions(Decl, FullContext, VNs).
 
-declareClassFunctions((Func -> Type), TypeContext) :-
-    Func =.. [Name | Args],
-    assert(type_signature(Name, Args, Type, TypeContext)).
+declareClassFunctions((Func -> Type), TypeContext, VNs) :-
+    copy_term(((Func -> Type), TypeContext, VNs), (Decl, CtxCopy, VNsCopy)),
+    !compileStatement(declare Decl, VNsCopy, CtxCopy).
 
-declareClassFunctions((Decl; Decls), TypeContext) :-
-    declareClassFunctions(Decl, TypeContext),
-    declareClassFunctions(Decls, TypeContext).
+declareClassFunctions((Decl; Decls), TypeContext, VNs) :-
+    declareClassFunctions(Decl, TypeContext, VNs),
+    declareClassFunctions(Decls, TypeContext, VNs).
 
 validateInstance((FirstDecl; RestDecl), Defs, T, C) :-
     Defs = (FirstDef; RestDef) ->
@@ -1449,9 +1455,10 @@ extractLambda(X, Y, TypeModifier, ClassName, MethodName,
     gensym(lambda, LambdaName),
     inferType(X, Tx, _),
     inferType(YAfterMacros, Ty, Assumptions),
+    inferTypeClasses(Assumptions),
     once(lambdaTypesAndArgs(X, YAfterMacros, Types, Args)),
     LambdaStructSig =.. [LambdaName | Types],
-    term_variables([Types, Ty], TypeVars),
+    term_variables([Types, Tx, Ty], TypeVars),
     LambdaStructType =.. [LambdaName | TypeVars],
     LambdaCons =.. [LambdaName | Args],
     filterMetAssumptions(Assumptions, NeededAssumptions),
@@ -1554,9 +1561,40 @@ bindExpression(Statements, Bind, BindExpr) :-
         ;
         BindExpr = Statements.
 
-% createAnyAssumptions([], []).
-% createAnyAssumptions([TypeVar | TypeVars], [TypeVar : any | AnyAssumptions]) :-
-%     createAnyAssumptions(TypeVars, AnyAssumptions).
+checkTypeFlow(Func, Context, Type) :-
+    walk(Func, collectTypeVars, [], VarsInFunc),
+    checkAssumptionFlow(Context, VarsInFunc, VarsInFuncAndContext),
+    walk(Type, checkTypeVarsOnlyIn(VarsInFuncAndContext), [], _).
+
+collectTypeVars(Var::type, Vars, [Var | Vars]) :-
+    atom(Var).
+
+checkTypeVarsOnlyIn(VarsInFunc, Var::type, State, State) :-
+    atom(Var),
+    \+member(Var, VarsInFunc),
+    throw(type_cannot_be_inferred(Var)).
+
+checkAssumptionFlow([], Vars, Vars).
+checkAssumptionFlow([T:C | Context], VarsIn, VarsOut) :-
+    walk(T, checkTypeVarsOnlyIn(VarsIn), [], _),
+    walk(C, collectTypeVars, VarsIn, VarsWithClass),
+    checkAssumptionFlow(Context, VarsWithClass, VarsOut).
+
+saturateTypeVars([]).
+saturateTypeVars([Var | Vars]) :-
+    gensym(unknown_type, Var),
+    assert(fake_type(Var)),
+    saturateTypeVars(Vars).
+
+assertAssumptions([]).
+assertAssumptions([T:C | Assumptions]) :-
+    (fake_type(T) ->
+        term_variables(C, CVars),
+        saturateTypeVars(CVars),
+        assert(class_instance(T, C, []))
+        ;
+        true),
+    assertAssumptions(Assumptions).
 
 % ============= Prelude =============
 :- compileStatement((class T : delete where { X : any => X del T -> X }),
