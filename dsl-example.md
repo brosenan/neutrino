@@ -22,11 +22,11 @@ union expr(T) = c(T)
 % Look-up a variable in a list of key-value pairs.
 declare lookup(&list((string, float64)), &string) -> maybe(float64).
 
-lookup(L, Key) := case L of & {
-    [] => none;
-    [&((K1, Val)) | Rest] => if(K1 == Key,
-				just(*Val),
-				lookup(Rest, Key))
+lookup(L, Key) := case L of {
+    &[] => none;
+    &[&((K1, Val)) | Rest] => if(K1 == Key,
+                        				just(*Val),
+                        				lookup(Rest, Key))
 }.
 
 % This is done as convenience, to allow adding two values of `maybe(T)`,
@@ -58,12 +58,12 @@ instance maybe(T) : minus where {
 % and a list of variable bindings, this function returns the value, or none
 % if one or more variables are not defined in the bindings.
 declare eval(&expr(float64), &list((string,float64))) -> maybe(float64).
-eval(Expr, Bindings) := case Expr of & {
-    c(N) => just(*N);
-    v(Var) => lookup(Bindings, Var);
-    plus(A, B) => eval(A, Bindings) + eval(B, Bindings);
-    minus(C, D) => eval(C, Bindings) - eval(D, Bindings);
-    zero => just(0.0)
+eval(Expr, Bindings) := case Expr of {
+    &c(N) => just(*N);
+    &v(Var) => lookup(Bindings, Var);
+    &plus(A, B) => eval(A, Bindings) + eval(B, Bindings);
+    &minus(C, D) => eval(C, Bindings) - eval(D, Bindings);
+    &zero => just(0.0)
 }.
 
 % Operator overloading. We define expr(T) to be an instance of plus to allow
@@ -91,12 +91,14 @@ A/\B := if(A, B, false).
 % To be able to solve equations we need to determine if a certain sub-expression
 % depends on a given variable. This function does this.
 declare depends_on(&expr(T), &string) -> bool.
-depends_on(Expr, Var) := case Expr of & {
-    c(_) => false;
-    v(Var1) => Var == Var1;
-    plus(A, B) => depends_on(A, Var) \/ depends_on(B, Var);
-    minus(C, D) => depends_on(C, Var) \/ depends_on(D, Var);
-    zero => false
+depends_on(Expr, Var) := case Expr of {
+    &c(_) => false;
+    &v(Var1) => Var == Var1;
+    &plus(A, B) => 
+      depends_on(A, Var) \/ depends_on(B, Var);
+    &minus(C, D) => 
+      depends_on(C, Var) \/ depends_on(D, Var);
+    &zero => false
 }.
 
 assert let << {

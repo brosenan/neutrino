@@ -401,7 +401,7 @@ inferTypeSpecial(_::Type, Type, []).
 inferTypeSpecial(&Expr, &Type, Assumptions) :-
     my_callable(Expr),
     functor(Expr, Name, Arity),
-    is_struct(Name/Arity) ->
+    is_constructor(Name, Arity) ->
         length(ArgTypes, Arity),
         type_signature(Name, ArgTypes, Type, Assumptions1),
         modifyAll(ArgTypes, makeRef, ModArgTypes),
@@ -454,40 +454,36 @@ validateCaseOptions((Pattern => Expr),
     !validateCaseOption((Pattern => Expr), Type, OutType, Assumptions, Index, Modifier),
     LastIndex is Index + 1.
 
-validateCaseOption((Pattern => Value), InType, OutType, Assumptions, Index, Modifier) :-
+validateCaseOption((Pattern => Value), InType, OutType, Assumptions, Index, _) :-
     walk(Pattern, replaceSingletonsWithDelete, [], _),
     \+ \+ validateCasePattern(Pattern, Index),
-    Pattern =.. [PatternName | PatternArgs],
-    !inferTypes(PatternArgs, PatternInferredTypes, _),
-    sameLength(PatternArgs, PatternTypes),
-    !type_signature(PatternName, PatternTypes, InferredType, _),
-    !modifyAll(PatternTypes, Modifier, PatternModTypes),
-    !call(Modifier, InferredType, ModType),
-    !matchTypes(PatternModTypes, PatternInferredTypes, PatternArgs),
-    !matchType(ModType, InType, Pattern),
+    inferType(Pattern, InType, _),
     inferType(Value, ValueType, Assumptions),
     matchType(ValueType, OutType, Value).
 
 validateCasePattern(Pattern, Index) :-
-    inferType(Pattern, Type, _),
-    (union_type(Type, Options) ->
-        true
+    Pattern = &RefPattern ->
+        validateCasePattern(RefPattern, Index)
         ;
-        throw(bad_union_type(Type, Pattern))),
-    !nth0(Index, Options, Option),
-    Option =.. [OptionName | OptionArgs],
-    Pattern =.. [PatternName | PatternArgs],
-    (OptionName == PatternName ->
-        true
-        ;
-        throw(case_mismatch(OptionName, PatternName))),
-    length(PatternArgs, PatternArity),
-    length(OptionArgs, OptionArity),
-    (PatternArity == OptionArity ->
-        true
-        ;
-        throw(case_arity_mismatch(OptionName, PatternArity, OptionArity))),
-    validateLValues(PatternArgs, OptionArgs).
+        inferType(Pattern, Type, _),
+        (union_type(Type, Options) ->
+            true
+            ;
+            throw(bad_union_type(Type, Pattern))),
+        !nth0(Index, Options, Option),
+        Option =.. [OptionName | OptionArgs],
+        Pattern =.. [PatternName | PatternArgs],
+        (OptionName == PatternName ->
+            true
+            ;
+            throw(case_mismatch(OptionName, PatternName))),
+        length(PatternArgs, PatternArity),
+        length(OptionArgs, OptionArity),
+        (PatternArity == OptionArity ->
+            true
+            ;
+            throw(case_arity_mismatch(OptionName, PatternArity, OptionArity))),
+        validateLValues(PatternArgs, OptionArgs).
 
 
 validateLValues([], []).
@@ -823,7 +819,7 @@ destructAssemblies([Var::Type | Args], [X::Type | DestArgs], AsmIn, AsmOut) :-
 destructAssemblies([&Cons | MoreArgs], [X | MoreDestArgs], AsmIn, AsmOut) :-
     my_callable(Cons),
     functor(Cons, Name, Arity),
-    is_struct(Name/Arity),
+    is_constructor(Name, Arity),
     destructRefAssembly(Cons, X, AsmIn, AsmMid),
     destructAssemblies(MoreArgs, MoreDestArgs, AsmMid, AsmOut).
 
@@ -835,9 +831,12 @@ destructAssemblies([Cons | MoreArgs], [X | MoreDestArgs], AsmIn, AsmOut) :-
     destructAssemblies(MoreArgs, MoreDestArgs, AsmMid, AsmOut).
 
 destructAssembly(Cons, Val, AsmIn, AsmOut) :-
-    Cons =.. [Name | Args],
-    destructAssemblies(Args, DestArgs, AsmIn, AsmMid),
-    AsmOut = [destruct(Val, Name, DestArgs) | AsmMid].
+    Cons = &RefCons ->
+        destructRefAssembly(RefCons, Val, AsmIn, AsmOut)
+        ;
+        Cons =.. [Name | Args],
+        destructAssemblies(Args, DestArgs, AsmIn, AsmMid),
+        AsmOut = [destruct(Val, Name, DestArgs) | AsmMid].
 
 destructRefAssemblies([], [], Asm, Asm).
 destructRefAssemblies([VarIn::Type | Args], [VarOut::Type | DestArgs], AsmIn, AsmOut) :-

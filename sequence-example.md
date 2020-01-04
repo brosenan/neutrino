@@ -29,9 +29,9 @@ instance int64 : seq(int64) where {
 
 % A list is a sequence.
 instance list(T) : seq(T) where {
-    empty(L) := case L of & {
-        [] => true;
-        [_ | _] => false
+    empty(L) := case L of {
+        &[] => true;
+        &[_ | _] => false
     };
     next(L) := case L of {
         [] => none;

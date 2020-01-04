@@ -18,16 +18,16 @@ Note that if this were a regular string (not a reference), we wouldn't have been
 
 ## Matching References
 
-Destructing of union and struct types can work on references. In the following example, a function takes a reference to a list. It uses a case expression to match the two options for a list (an empty and a non-empty list). We add a `&` between the `of` and the `{` to note that this case expression works on a reference, in which case the component values exposed by destructing the list are references as well.
+Destructing of union and struct types can work on references. In the following example, a function takes a reference to a list. It uses a case expression to match the two options for a list (an empty and a non-empty list). We add a `&` before each option constructor to note that this case expression works on a reference, in which case the component values exposed by destructing the list are references as well.
 
 The following compiles successfully:
 
 ```prolog
 declare sum_lengths(&list(string)) -> int64.
 
-sum_lengths(L) := case L of & {
-    [] => 0;
-    [S | L1] => strlen(S) + sum_lengths(L1)
+sum_lengths(L) := case L of {
+    &[] => 0;
+    &[S | L1] => strlen(S) + sum_lengths(L1)
 }.
 ```
 
