@@ -391,10 +391,7 @@ inferTypeSpecial(N, float64, []) :- float(N).
 inferTypeSpecial(S, string, []) :- string(S).
 
 inferTypeSpecial(case Expr of {Branches}, OutType, Assumptions) :-
-    inferCaseExprType(Expr, Branches, OutType, Assumptions, (=)).
-
-inferTypeSpecial(case Expr of & {Branches}, OutType, Assumptions) :-
-    inferCaseExprType(Expr, Branches, OutType, Assumptions, makeRef).
+    inferCaseExprType(Expr, Branches, OutType, Assumptions).
 
 inferTypeSpecial(_::Type, Type, []).
 
@@ -413,10 +410,10 @@ inferTypeSpecial(&Expr, &Type, Assumptions) :-
         Expr=_::_,
         inferType(Expr, Type, Assumptions).
 
-inferCaseExprType(Expr, Branches, OutType, Assumptions, Modifier) :-
+inferCaseExprType(Expr, Branches, OutType, Assumptions) :-
     !inferType(Expr, InType, ExprAssumptions),
     !validateCaseOptions(
-        Branches, InType, OutType, CaseAssumptions, 0, OptionCount, Modifier),
+        Branches, InType, OutType, CaseAssumptions, 0, OptionCount),
     !union_type(InType, Options),
     (length(Options, OptionCount) ->
         true
@@ -442,19 +439,19 @@ assertOptionSignatures(Options, Type) :-
         assert(is_constructor(Name, Arity)).
 
 validateCaseOptions((Branch; Branches),
-        Type, OutType, Assumptions, FirstIndex, LastIndex, Modifier) :-
-    !validateCaseOption(Branch, Type, OutType, Assumptions1, FirstIndex, Modifier),
+        Type, OutType, Assumptions, FirstIndex, LastIndex) :-
+    !validateCaseOption(Branch, Type, OutType, Assumptions1, FirstIndex),
     NextIndex is FirstIndex + 1,
     !validateCaseOptions(
-        Branches, Type, OutType, Assumptions2, NextIndex, LastIndex, Modifier),
+        Branches, Type, OutType, Assumptions2, NextIndex, LastIndex),
     append(Assumptions1, Assumptions2, Assumptions).
 
 validateCaseOptions((Pattern => Expr), 
-        Type, OutType, Assumptions, Index, LastIndex, Modifier) :-
-    !validateCaseOption((Pattern => Expr), Type, OutType, Assumptions, Index, Modifier),
+        Type, OutType, Assumptions, Index, LastIndex) :-
+    !validateCaseOption((Pattern => Expr), Type, OutType, Assumptions, Index),
     LastIndex is Index + 1.
 
-validateCaseOption((Pattern => Value), InType, OutType, Assumptions, Index, _) :-
+validateCaseOption((Pattern => Value), InType, OutType, Assumptions, Index) :-
     walk(Pattern, replaceSingletonsWithDelete, [], _),
     \+ \+ validateCasePattern(Pattern, Index),
     inferType(Pattern, InType, _),
@@ -724,9 +721,9 @@ test(case) :-
 % not placed.
 test(case_ref) :-
     compileStatement((union foobar2 = foo2(string) + bar2(string)), []),
-    assembly((case foo2("hello") of & {
-        foo2('A'::(&string)) => 'A'::(&string) == 'A'::(&string);
-        bar2('_'::(&string)) => false
+    assembly((case foo2("hello") of {
+        &foo2('A'::(&string)) => 'A'::(&string) == 'A'::(&string);
+        &bar2('_'::(&string)) => false
     }), Val, [], Asm),
     (Val, Asm) =@= (Val,
                     [literal("hello", Hello::string),
@@ -751,10 +748,6 @@ assemblySpecial(*Var, Var, Asm, Asm).
 assemblySpecial((case Expr of {Branches}), Val, AsmIn, AsmOut) :-
     branchesAssembly(ExprVal, Branches, Val, destructAssembly, BranchesAsm),
     assembly(Expr, ExprVal, [case(ExprVal, BranchesAsm) | AsmIn], AsmOut).
-
-assemblySpecial((case Expr of & {Branches}), Val, AsmIn, AsmOut) :-
-    !branchesAssembly(ExprVal, Branches, Val, destructRefAssembly, BranchesAsm),
-    !assembly(Expr, ExprVal, [case(ExprVal, BranchesAsm) | AsmIn], AsmOut).
 
 assembly(Expr, Val, AsmIn, AsmOut) :-
     assemblySpecial(Expr, Val, AsmIn, AsmOut) ->
@@ -806,54 +799,51 @@ test(struct) :-
 
 destructAssemblies([], [], Asm, Asm).
 
-destructAssemblies([Var::Type | Args], [X::Type | DestArgs], AsmIn, AsmOut) :-
+destructAssemblies([Arg | Args], [DstArg | DestArgs], AsmIn, AsmOut) :-
+    destructAssembly(Arg, DstArg, AsmIn, AsmMid),
+    destructAssemblies(Args, DestArgs, AsmMid, AsmOut).
+
+destructAssembly(Var::Type, X::Type, AsmIn, AsmOut) :-
     Var == '_' ->
-        destructAssemblies(Args, DestArgs,
-            [literal(0, Dummy::int64),
-            call(del, [Dummy::int64, X::Type], [Type:delete], _) 
-            | AsmIn], AsmOut)
+        AsmOut = [literal(0, Dummy::int64),
+                  call(del, [Dummy::int64, X::Type], [Type:delete], _) 
+                 | AsmIn]
         ;
         Var = X,
-        destructAssemblies(Args, DestArgs, AsmIn, AsmOut).
+        AsmOut = AsmIn.
 
-destructAssemblies([&Cons | MoreArgs], [X | MoreDestArgs], AsmIn, AsmOut) :-
+destructAssembly(&Cons, X, AsmIn, AsmOut) :-
     my_callable(Cons),
     functor(Cons, Name, Arity),
     is_constructor(Name, Arity),
-    destructRefAssembly(Cons, X, AsmIn, AsmMid),
-    destructAssemblies(MoreArgs, MoreDestArgs, AsmMid, AsmOut).
+    destructRefAssembly(Cons, X, AsmIn, AsmOut).
 
-destructAssemblies([Cons | MoreArgs], [X | MoreDestArgs], AsmIn, AsmOut) :-
+destructAssembly(Cons, X, AsmIn, AsmOut) :-
     my_callable(Cons),
     functor(Cons, Name, Arity),
-    is_struct(Name/Arity),
-    destructAssembly(Cons, X, AsmIn, AsmMid),
-    destructAssemblies(MoreArgs, MoreDestArgs, AsmMid, AsmOut).
-
-destructAssembly(Cons, Val, AsmIn, AsmOut) :-
-    Cons = &RefCons ->
-        destructRefAssembly(RefCons, Val, AsmIn, AsmOut)
-        ;
-        Cons =.. [Name | Args],
-        destructAssemblies(Args, DestArgs, AsmIn, AsmMid),
-        AsmOut = [destruct(Val, Name, DestArgs) | AsmMid].
+    is_constructor(Name, Arity),
+    Cons =.. [Name | Args],
+    destructAssemblies(Args, DestArgs, AsmIn, AsmMid),
+    AsmOut = [destruct(X, Name, DestArgs) | AsmMid].
 
 destructRefAssemblies([], [], Asm, Asm).
-destructRefAssemblies([VarIn::Type | Args], [VarOut::Type | DestArgs], AsmIn, AsmOut) :-
-    (VarIn == '_' ->
+destructRefAssemblies([Arg | Args], [DestArg | DestArgs], AsmIn, AsmOut) :-
+    destructRefAssembly(Arg, DestArg, AsmIn, AsmMid),
+    destructRefAssemblies(Args, DestArgs, AsmMid, AsmOut).
+
+destructRefAssembly(VarIn::Type, VarOut::Type, Asm, Asm) :-
+    VarIn == '_' ->
         true
         ;
-        VarOut = VarIn),
-    destructRefAssemblies(Args, DestArgs, AsmIn, AsmOut).
+        VarOut = VarIn.
 
-destructRefAssemblies([&Cons | MoreArgs], [X | MoreDestArgs], AsmIn, AsmOut) :-
-    my_callable(Cons),
-    functor(Cons, Name, Arity),
-    is_struct(Name/Arity),
-    !destructRefAssembly(Cons, X, AsmIn, AsmMid),
-    !destructRefAssemblies(MoreArgs, MoreDestArgs, AsmMid, AsmOut).
+destructRefAssembly(&Cons, Val, AsmIn, AsmOut) :-
+    destructRefAssembly(Cons, Val, AsmIn, AsmOut).
 
 destructRefAssembly(Cons, Val, AsmIn, AsmOut) :-
+    my_callable(Cons),
+    functor(Cons, Name, Arity),
+    is_constructor(Name, Arity),
     Cons =.. [Name | Args],
     !destructRefAssemblies(Args, DestArgs, AsmIn, AsmMid),
     AsmOut = [destruct_ref(Val, Name, DestArgs) | AsmMid].
