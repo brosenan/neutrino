@@ -68,7 +68,7 @@ compileStatement((assert ExprWithMacros), VNs) :-
     inferType(Expr, Type, Assumptions),
     matchType(Type, bool, Expr),
     checkAssumptions(Assumptions),
-    once(assembly(Expr, Result, [], Asm)),
+    assembly(Expr, Result, [], Asm),
     linearityCheck(Asm, Result, [], _),
     unnameVars((Asm, Result), (UnAsm, UnResult), _),
     specialize(UnAsm, Residual),
@@ -148,7 +148,7 @@ compileStatement((class T:C where {Decls}), VNs, Context) :-
     !declareClassFunctions(Decls, ClassCtx, VNs).
 
 compileFunctionDefinition((Func := Body), TypeContext) :-
-    walk(Func, replaceSingletosWithDelete, [], _),
+    walk(Func, replaceSingletonsWithDelete, [], _),
     applyMacros(Body, BodyAfterMacros),
     Func =.. [Name | Args],
     inferType(BodyAfterMacros, Type, BodyAssumptions),
@@ -170,7 +170,7 @@ compileFunctionDefinition((Func := Body), TypeContext) :-
     !assembly(BodyAfterMacros, Result, [], BodyAsm),
     !destructAssemblies(Args, DestArgs, BodyAsm, Asm),
     walk(Asm, enumerateVars, 0, _),
-    !stateMapList(introduceVars, DestArgs, [], VarState1),
+    !introduceVarList(DestArgs, [], VarState1),
     !linearityCheck(Asm, Result, VarState1, _),
     unnameVars((TypeContext, DestArgs, Asm, Result), 
                (UnTypeContext, UnArgs, UnAsm, UnResult), _),
@@ -455,7 +455,7 @@ validateCaseOptions((Pattern => Expr),
     LastIndex is Index + 1.
 
 validateCaseOption((Pattern => Value), InType, OutType, Assumptions, Index, Modifier) :-
-    walk(Pattern, replaceSingletosWithDelete, [], _),
+    walk(Pattern, replaceSingletonsWithDelete, [], _),
     \+ \+ validateCasePattern(Pattern, Index),
     Pattern =.. [PatternName | PatternArgs],
     !inferTypes(PatternArgs, PatternInferredTypes, _),
@@ -652,7 +652,7 @@ removeVars(Var::Type, new, _) :-
     \+basicType(Type),
     throw(var_not_used(Var, Type)).
 
-replaceSingletosWithDelete(Var, S, S) :-
+replaceSingletonsWithDelete(Var, S, S) :-
     var(Var) ->
         Var = '_'::_
         ;
@@ -682,7 +682,7 @@ test(var_ref) :-
 
 % Functions use the call command.
 test(simple_func) :-
-    once(assembly(1+2, Val::int64, [], Assembly)),
+    assembly(1+2, Val::int64, [], Assembly),
     (Val, Assembly) =@= (Val,
                         [literal(1, One::int64),
                          literal(2, Two::int64),
@@ -690,7 +690,7 @@ test(simple_func) :-
 
 % Nested functions are assembled bottom-up.
 test(nested_func) :-
-    once(assembly(1+2+3, Val::int64, [], Assembly)),
+    assembly(1+2+3, Val::int64, [], Assembly),
     (Val, Assembly) =@= (Val,
                         [literal(1, One::int64),
                          literal(2, Two::int64), 
@@ -988,12 +988,6 @@ tupleToList(Tuple, List) :-
 fake_type(Name::_) :-
     atom(Name).
 
-assignFakeTypes([]).
-assignFakeTypes([V | Vars]) :-
-    gensym(unknown_type, V),
-    assert(fake_type(V)),
-    assignFakeTypes(Vars).
-
 checkAssumptions([]).
 checkAssumptions([T:C | Rest]) :-
     var(T) ->
@@ -1029,21 +1023,6 @@ modifyAll([A | As], Modifier, [B | Bs]) :-
     call(Modifier, A, B),
     modifyAll(As, Modifier, Bs).
 
-transformBranchesForRef([], []).
-transformBranchesForRef([BranchAsm | BranchesAsm], [RefBranchAsm | RefBranchesAsm]) :-
-    transformBranchForRef(BranchAsm, RefBranchAsm),
-    transformBranchesForRef(BranchesAsm, RefBranchesAsm).
-
-transformBranchForRef([], []).
-transformBranchForRef([Cmd | Cmds], CmdsRef) :-
-    Cmd = destruct(Expr, Name, Args) ->
-        transformBranchForRef([destruct_ref(Expr, Name, Args) | Cmds], CmdsRef)
-        ;
-        CmdsRef = [Cmd | RestCmdsRef],
-        transformBranchForRef(Cmds, RestCmdsRef).
-
-transformCommandForRef(destruct(Expr, Name, Args), destruct_ref(Expr, Name, Args)).
-
 :- begin_tests(unnameVars).
 
 % unnameVars reverses the operation of nameVars. While the latter works on a list of
@@ -1051,7 +1030,7 @@ transformCommandForRef(destruct(Expr, Name, Args), destruct_ref(Expr, Name, Args
 % identifies all elements of the form Name::_, assigns a free variable to each, and
 % then replaces each such element with its corresponding variable.
 test(unnameVars) :-
-    assignFakeTypes([FakeType]),
+    saturateTypeVars([FakeType]),
     unnameVars(foo('A'::int64, 'B'::_)+
                foo('A'::int64, C::string)+
                foo(C::string, _) + 
@@ -1282,19 +1261,6 @@ selectAsmBranch([[DestructCmd | RestOfFirstBranch] | Branches], Branch) :-
         Branch = RestOfFirstBranch
         ;
         selectAsmBranch(Branches, Branch).
-
-validateDecls((Decl1; Decl2), Ctx) :-
-    validateDecls(Decl1, Ctx),
-    validateDecls(Decl2, Ctx).
-    
-validateDecls((MoreCtx => Decl), Ctx) :-
-    tupleToList(MoreCtx, MoreCtxAsList),
-    append(Ctx, MoreCtxAsList, FullCtx),
-    validateDecls(Decl, FullCtx).
-    
-validateDecls((Func -> Type), Ctx) :-
-    walk(Func, checkVarIsIn(Ctx), [], _),
-    walk(Type, checkVarIsIn(Ctx), [], _).
 
 checkVarIsIn(Ctx, Type::_, State, State) :-
     member(Type::_ : _, Ctx) ->
