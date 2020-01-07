@@ -70,8 +70,8 @@ compileStatement((assert ExprWithMacros), VNs) :-
     checkAssumptions(Assumptions),
     assembly(Expr, Result, [], Asm),
     linearityCheck(Asm, Result, [], _),
-    unnameVars((Asm, Result), (UnAsm, UnResult), _),
-    specialize(UnAsm, Residual),
+    unnameVars((Asm, Result), (UnAsm, UnResult::bool), _),
+    !specialize(UnAsm, Residual),
     (\+(UnResult == true) ->
         throw(assertion_failed(UnResult, Residual))
         ;
@@ -272,25 +272,25 @@ writeln_list(S, []) :-
 type_signature(*, [&T], T, [T:basic_type]).
 
 type_signature(==, [T, T], bool, []).
-constant_propagation(A==B, V) :- A == B -> V = true; V = false.
+constant_propagation(A::T==B::T, V::bool) :- A == B -> V = true; V = false.
 
 type_signature(int64_plus, [int64, int64], int64, []).
-constant_propagation(int64_plus(A, B), V) :- V is A+B.
+constant_propagation(int64_plus(A::int64, B::int64), V::int64) :- V is A+B.
 
 type_signature(float64_plus, [float64, float64], float64, []).
-constant_propagation(float64_plus(A, B), V) :- V is A+B.
+constant_propagation(float64_plus(A::float64, B::float64), V::float64) :- V is A+B.
 
 type_signature(int64_minus, [int64, int64], int64, []).
-constant_propagation(int64_minus(A, B), V) :- V is A-B.
+constant_propagation(int64_minus(A::int64, B::int64), V::int64) :- V is A-B.
 
 type_signature(float64_minus, [float64, float64], float64, []).
-constant_propagation(float64_minus(A, B), V) :- V is A-B.
+constant_propagation(float64_minus(A::float64, B::float64), V::float64) :- V is A-B.
 
 type_signature(strlen, [&string], int64, []).
-constant_propagation(strlen(S), Len) :- string_length(S, Len).
+constant_propagation(strlen(S::string), Len::int64) :- string_length(S, Len).
 
 type_signature(strcat, [string, string], string, []).
-constant_propagation(strcat(S1, S2), S) :- string_concat(S1, S2, S).
+constant_propagation(strcat(S1::string, S2::string), S::string) :- string_concat(S1, S2, S).
 
 type_signature(delete_string, [string, T], T, []).
 constant_propagation(delete_string(_, X), X).
@@ -654,13 +654,17 @@ replaceSingletonsWithDelete(Var, S, S) :-
 :- begin_tests(assembly).
 
 % Numbers and strings are assembled using the literal command.
-test(assemble_number) :-
-    assembly(42, Val, [], Assembly),
-    Assembly == [literal(42, Val)].
+test(assemble_int) :-
+    assembly(42, Val::_, [], Assembly),
+    Assembly == [literal(42, Val::int64)].
+
+test(assemble_float) :-
+    assembly(42.0, Val::_, [], Assembly),
+    Assembly == [literal(42.0, Val::float64)].
 
 test(string) :-
-    assembly("hello", Val, [], Assembly),
-    Assembly == [literal("hello", Val)].
+    assembly("hello", Val::_, [], Assembly),
+    Assembly == [literal("hello", Val::string)].
 
 % Variables and variable references are returned as their own value.
 test(var) :-
@@ -1024,14 +1028,14 @@ test(unnameVars) :-
                foo('A'::int64, C::string)+
                foo(C::string, _) + 
                [FakeType:seq(FakeType), _], Unnamed, VNs),
-    Unnamed =@= foo(A, B)+
-                foo(A, C)+
-                foo(C, _)+
+    Unnamed =@= foo(A::int64, B::_)+
+                foo(A::int64, C::string)+
+                foo(C::string, _)+
                 [T:seq(T), _],
-    Unnamed = foo(A, B)+
-              foo(A, C)+
-              foo(C, _)+
-              [T:seq(T), _],
+    Unnamed = foo(A::int64, B::_)+
+                foo(A::int64, C::string)+
+                foo(C::string, _)+
+                [T:seq(T), _],
     member('A'=A1, VNs),
     A1 == A.
 
@@ -1043,7 +1047,8 @@ unnameVars(Term, Unnamed, Names) :-
     replaceInTerm(Term1, replaceNamed(Names), Unnamed).
 
 findNames(Term, StateIn, StateOut) :-
-    Term = Name::_ ->
+    nonvar(Term),
+    (Term = Name::_ ->
         (atom(Name),  \+member(Name=_, StateIn) ->
             StateOut = [Name=_ | StateIn]
             ;
@@ -1055,19 +1060,23 @@ findNames(Term, StateIn, StateOut) :-
                 ;
                 StateOut = StateIn)
             ;
-            fail.
+            fail).
 
 replaceNamed(Names, Term, Unnamed) :-
-    Term = Name::_ ->
-        (var(Name) ->
-            Unnamed = Name
-            ;
-            member(Name=Unnamed, Names))
+    var(Term) ->
+	Unnamed = Term
         ;
-        fake_type(Term) ->
-            member(Term=Unnamed, Names)
+        Term = Name::Type ->
+            (var(Name) ->
+                Unnamed = Name::Type
+                ;
+                member(Name=Var, Names),
+                Unnamed = Var::Type)
             ;
-            fail.
+            fake_type(Term) ->
+                member(Term=Unnamed, Names)
+                ;
+                fail.
 
 replaceInTerm(Term, Pred, Replaced) :-
     call(Pred, Term, Replaced) ->
@@ -1093,23 +1102,23 @@ replaceInTerms([Term | Terms], Pred, [RepTerm | RepTerms]) :-
 % For example, the literal command is specialized by removing it and unifying the
 % result variable with the literal value.
 test(literal) :-
-    specialize([literal(42, FortyTwo),
-                literal("hello", Hello)], Asm),
+    specialize([literal(42, FortyTwo::int64),
+                literal("hello", Hello::string)], Asm),
     FortyTwo == 42,
     Hello == "hello",
     Asm == [].
 
 % Construct commands construct compound terms based on their arguments.
 test(construct) :-
-    specialize([construct(foo, [1, 2], X),
-                construct(bar, [X, 3], Y)], Asm),
+    specialize([construct(foo, [1, 2], X::footype),
+                construct(bar, [X, 3], Y::bartype)], Asm),
     Y == bar(foo(1, 2), 3),
     Asm == [].
 
 % Destruct works by destructing compound terms into their components.
 test(destruct) :-
-    specialize([destruct(bar(foo(1, 2), 3), bar, [Foo, Three]),
-                destruct(Foo, foo, [One, Two])], Asm),
+    specialize([destruct(bar(foo(1::int64, 2::int64)::footype, 3::int64)::bartype, bar, [Foo::footype, Three::int64]),
+                destruct(Foo::footype, foo, [One::int64, Two::int64])], Asm),
     One == 1,
     Two == 2,
     Three == 3,
@@ -1117,8 +1126,8 @@ test(destruct) :-
 
 % destruct_ref works the same way.
 test(destruct_ref) :-
-    specialize([destruct_ref(bar(foo(1, 2), 3), bar, [Foo, Three]),
-                destruct_ref(Foo, foo, [One, Two])], Asm),
+    specialize([destruct_ref(bar(foo(1::int64, 2::int64)::footype, 3::int64)::bartype, bar, [Foo::footype, Three::int64]),
+                destruct_ref(Foo::footype, foo, [One::int64, Two::int64])], Asm),
     One == 1,
     Two == 2,
     Three == 3,
@@ -1126,10 +1135,10 @@ test(destruct_ref) :-
 
 % If given a free variable, destruct remains unevaluated, but allows evaluation continue.
 test(destruct_free_var) :-
-    specialize([destruct(X, foo, [Y, Z]),
-                literal(3, Three)], Asm),
+    specialize([destruct(X::footype, foo, [Y::int64, Z::int64]),
+                literal(3, Three::int64)], Asm),
     Three = 3,
-    Asm = [destruct(X, foo, [Y, Z])].
+    Asm = [destruct(X::footype, foo, [Y::int64, Z::int64])].
 
 % Calls to implemented functions are replaced with their bodies.
 test(call_implemented) :-
@@ -1141,10 +1150,10 @@ test(call_implemented) :-
 % When calling a built-in function that has a Prolog implementation with all arguments
 % ground (no free variables), the Prolog implementation is used to evaluate the result (constant propagation)
 test(constant_propagation) :-
-    specialize([call(+, [1, 2], [int64:plus], X),
-                call(+, [X, 3], [int64:plus], R)], Asm),
+    specialize([call(+, [1::int64, 2::int64], [int64:plus], X::int64),
+                call(+, [X::int64, 3::int64], [int64:plus], R)], Asm),
     Asm == [],
-    R == 6.
+    R == 6::int64.
 
 % A case command is not specialized if the expression it destructs is a free variable.
 % In such a case, the command is left untouched, but further commands are specialized.
@@ -1155,7 +1164,7 @@ test(case_with_free_var) :-
             construct(bar, [B, A], Res)],
             [destruct(X, bar, [X, Y]),
             construct(foo, [Y, X], Res)]]),
-        literal(2, Two)], Asm),
+        literal(2, Two::int64)], Asm),
     Two == 2,
     Asm == [case(X, [
             [destruct(X, foo, [A, B]),
@@ -1169,11 +1178,11 @@ test(case_with_free_var) :-
 test(case_with_concrete_expr) :-
     specialize([
         case(bar(X1, Y1), [
-            [destruct(bar(X1, Y1), foo, [A, B]),
-            construct(bar, [B, A], Res)],
-            [destruct(bar(X1, Y1), bar, [X, Y]),
-            construct(foo, [Y, X], Res)]]),
-        literal(2, Two)], Asm),
+            [destruct(bar(X1, Y1)::bartype, foo, [A, B]),
+            construct(bar, [B, A], Res::bartype)],
+            [destruct(bar(X1, Y1)::bartype, bar, [X, Y]),
+            construct(foo, [Y, X], Res::footype)]]),
+        literal(2, Two::int64)], Asm),
     Two == 2,
     Res == foo(Y1, X1),
     Asm == [].
@@ -1188,16 +1197,16 @@ test(assign) :-
 :- end_tests(specialize).
 
 specialize([], []).
-specialize([literal(Val, Val) | AsmIn], AsmOut) :-
+specialize([literal(Val, Val::_) | AsmIn], AsmOut) :-
     trace(AsmIn),
     !specialize(AsmIn, AsmOut).
-specialize([construct(Name, Args, Term) | AsmIn], AsmOut) :-
+specialize([construct(Name, Args, Term::_) | AsmIn], AsmOut) :-
     Term =.. [Name | Args],
     trace(AsmIn),
     !specialize(AsmIn, AsmOut).
-specialize([destruct(Term, Name, Args) | AsmIn], AsmOut) :-
+specialize([destruct(Term::Type, Name, Args) | AsmIn], AsmOut) :-
     var(Term) ->
-        AsmOut = [destruct(Term, Name, Args) | AsmMid],
+        AsmOut = [destruct(Term::Type, Name, Args) | AsmMid],
         trace(AsmIn),
         !specialize(AsmIn, AsmMid)
         ;
