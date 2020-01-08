@@ -167,14 +167,15 @@ compileFunctionDefinition((Func := Body), TypeContext) :-
         validateArgTypes(Args),
         TypeContext = [],
         assert(type_signature(Name, ArgTypes, Type, TypeContext))),
+    writeln(func(Args, BodyAssumptions)),
     !assembly(BodyAfterMacros, Result, [], BodyAsm),
     !destructAssemblies(Args, DestArgs, BodyAsm, Asm),
-    walk(Asm, enumerateVars, 0, _),
     !introduceVarList(DestArgs, [], VarState1),
     !linearityCheck(Asm, Result, VarState1, _),
+    writeln(function_impl1(Name, TypeContext, Args, Asm, Result)),
     unnameVars((TypeContext, DestArgs, Asm, Result), 
                (UnTypeContext, UnArgs, UnAsm, UnResult), _),
-%    writeln(function_impl(Name, UnTypeContext, UnArgs, UnAsm, UnResult)),
+    writeln(function_impl(Name, UnTypeContext, UnArgs, UnAsm, UnResult)),
     assert(function_impl(Name, UnTypeContext, UnArgs, UnAsm, UnResult)).
 
 inferType(Term, Type, Assumptions) :-
@@ -1027,15 +1028,16 @@ test(unnameVars) :-
     unnameVars(foo('A'::int64, 'B'::_)+
                foo('A'::int64, C::string)+
                foo(C::string, _) + 
-               [FakeType:seq(FakeType), _], Unnamed, VNs),
+               [FakeType:seq(FakeType), _, 'T1'::type(unique7)], Unnamed, VNs),
+    writeln(Unnamed),
     Unnamed =@= foo(A::int64, B::_)+
                 foo(A::int64, C::string)+
                 foo(C::string, _)+
-                [T:seq(T), _],
+                [T:seq(T), _, T1],
     Unnamed = foo(A::int64, B::_)+
                 foo(A::int64, C::string)+
                 foo(C::string, _)+
-                [T:seq(T), _],
+                [T:seq(T), _, T1],
     member('A'=A1, VNs),
     A1 == A.
 
@@ -1044,37 +1046,49 @@ test(unnameVars) :-
 unnameVars(Term, Unnamed, Names) :-
     copy_term(Term, Term1),
     walk(Term1, findNames, [], Names),
+    writeln(Names),
     replaceInTerm(Term1, replaceNamed(Names), Unnamed).
 
+addMappingIfNotThere(Name, MappingIn, MappingOut) :-
+    atom(Name) ->
+        (member(Name=_, MappingIn) ->
+    	    MappingOut = MappingIn
+            ;
+            MappingOut = [Name=_ | MappingIn])
+        ;
+        MappingOut = MappingIn.
+    
 findNames(Term, StateIn, StateOut) :-
     nonvar(Term),
-    (Term = Name::_ ->
-        (atom(Name),  \+member(Name=_, StateIn) ->
-            StateOut = [Name=_ | StateIn]
-            ;
-            StateOut = StateIn)
-        ;
-        fake_type(Term) ->
-            (\+member(Term=_, StateIn) ->
-                StateOut = [Term=_ | StateIn]
-                ;
-                StateOut = StateIn)
-            ;
-            fail).
+    (Term = Name::Type ->
+         (Type = type(Unique), atom(Unique) ->
+	     addMappingIfNotThere(Name, StateIn, StateOut)
+	     ;
+	     addMappingIfNotThere(Name, StateIn, StateMid),
+	     walk(Type, findNames, StateMid, StateOut))
+         ;
+         fake_type(Term) ->
+             addMappingIfNotThere(Term, StateIn, StateOut)
+             ;
+             fail).
 
 replaceNamed(Names, Term, Unnamed) :-
     var(Term) ->
 	Unnamed = Term
         ;
         Term = Name::Type ->
-            (var(Name) ->
-                Unnamed = Name::Type
-                ;
-                member(Name=Var, Names),
-                Unnamed = Var::Type)
+            (Type = type(Unique), atom(Unique) ->
+	        member(Name=Unnamed, Names)
+	        ;
+                !replaceInTerm(Type, replaceNamed(Names), TypeRep),
+                (var(Name) ->
+                        Unnamed = Name::TypeRep
+                        ;
+                        !member(Name=Var, Names),
+                        Unnamed = Var::TypeRep))
             ;
             fake_type(Term) ->
-                member(Term=Unnamed, Names)
+                !member(Term=Unnamed, Names)
                 ;
                 fail.
 
