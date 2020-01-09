@@ -167,15 +167,13 @@ compileFunctionDefinition((Func := Body), TypeContext) :-
         validateArgTypes(Args),
         TypeContext = [],
         assert(type_signature(Name, ArgTypes, Type, TypeContext))),
-    writeln(func(Args, BodyAssumptions)),
     !assembly(BodyAfterMacros, Result, [], BodyAsm),
     !destructAssemblies(Args, DestArgs, BodyAsm, Asm),
     !introduceVarList(DestArgs, [], VarState1),
     !linearityCheck(Asm, Result, VarState1, _),
-    writeln(function_impl1(Name, TypeContext, Args, Asm, Result)),
     unnameVars((TypeContext, DestArgs, Asm, Result), 
                (UnTypeContext, UnArgs, UnAsm, UnResult), _),
-    writeln(function_impl(Name, UnTypeContext, UnArgs, UnAsm, UnResult)),
+    % writeln(function_impl(Name, UnTypeContext, UnArgs, UnAsm, UnResult)),
     assert(function_impl(Name, UnTypeContext, UnArgs, UnAsm, UnResult)).
 
 inferType(Term, Type, Assumptions) :-
@@ -288,7 +286,7 @@ type_signature(float64_minus, [float64, float64], float64, []).
 constant_propagation(float64_minus(A::float64, B::float64), V::float64) :- V is A-B.
 
 type_signature(strlen, [&string], int64, []).
-constant_propagation(strlen(S::string), Len::int64) :- string_length(S, Len).
+constant_propagation(strlen(S::(&string)), Len::int64) :- string_length(S, Len).
 
 type_signature(strcat, [string, string], string, []).
 constant_propagation(strcat(S1::string, S2::string), S::string) :- string_concat(S1, S2, S).
@@ -748,7 +746,7 @@ assemblySpecial(Expr, Val::Type, Asm, [literal(Expr, Val::Type) | Asm]) :-
 
 assemblySpecial(Name::Type, Name::Type, Asm, Asm).
 assemblySpecial(&Name::Type, &Name::Type, Asm, Asm).
-assemblySpecial(*Var, Var, Asm, Asm).
+assemblySpecial(*Var, *Var, Asm, Asm).
 
 assemblySpecial((case Expr of {Branches}), Val, AsmIn, AsmOut) :-
     branchesAssembly(ExprVal, Branches, Val, destructAssembly, BranchesAsm),
@@ -901,7 +899,10 @@ consumeVar(Var, StateIn, StateOut) :-
             (Var = &Name::Type ->
                 !stateMap(borrowVars, Name::Type, StateIn, StateOut)
                 ;
-                throw(unsupported_variable(Var)))).
+                (Var = *Name::Type ->
+                    !stateMap(consumeVars, Name::Type, StateIn, StateOut)
+                    ;
+                    throw(unsupported_variable(Var))))).
 
 consumeVarList([], State, State).
 consumeVarList([Var | Vars], StateIn, StateOut) :-
@@ -1029,7 +1030,6 @@ test(unnameVars) :-
                foo('A'::int64, C::string)+
                foo(C::string, _) + 
                [FakeType:seq(FakeType), _, 'T1'::type(unique7)], Unnamed, VNs),
-    writeln(Unnamed),
     Unnamed =@= foo(A::int64, B::_)+
                 foo(A::int64, C::string)+
                 foo(C::string, _)+
@@ -1046,7 +1046,6 @@ test(unnameVars) :-
 unnameVars(Term, Unnamed, Names) :-
     copy_term(Term, Term1),
     walk(Term1, findNames, [], Names),
-    writeln(Names),
     replaceInTerm(Term1, replaceNamed(Names), Unnamed).
 
 addMappingIfNotThere(Name, MappingIn, MappingOut) :-
@@ -1140,8 +1139,9 @@ test(destruct) :-
 
 % destruct_ref works the same way.
 test(destruct_ref) :-
-    specialize([destruct_ref(bar(foo(1::int64, 2::int64)::footype, 3::int64)::bartype, bar, [Foo::footype, Three::int64]),
-                destruct_ref(Foo::footype, foo, [One::int64, Two::int64])], Asm),
+    specialize([destruct_ref(bar(foo(1::int64, 2::int64)::footype, 3::int64)::(&bartype),
+                             bar, [Foo::(&footype), Three::(&int64)]),
+                destruct_ref(Foo::(&footype), foo, [One::(&int64), Two::(&int64)])], Asm),
     One == 1,
     Two == 2,
     Three == 3,
@@ -1218,39 +1218,42 @@ specialize([construct(Name, Args, Term::_) | AsmIn], AsmOut) :-
     Term =.. [Name | Args],
     trace(AsmIn),
     !specialize(AsmIn, AsmOut).
-specialize([destruct(Term::Type, Name, Args) | AsmIn], AsmOut) :-
+specialize([destruct(Term::Type, Name, DerefArgs) | AsmIn], AsmOut) :-
     var(Term) ->
-        AsmOut = [destruct(Term::Type, Name, Args) | AsmMid],
+        AsmOut = [destruct(Term::Type, Name, DerefArgs) | AsmMid],
         trace(AsmIn),
         !specialize(AsmIn, AsmMid)
         ;
         Term =.. [Name | Args],
+        !makeDerefTypes(Args, DerefArgs),
         trace(AsmIn),
         !specialize(AsmIn, AsmOut).
-specialize([destruct_ref(Term, Name, Args) | AsmIn], AsmOut) :-
-    (Term = &RefTerm ->
-        true
+specialize([destruct_ref(Term::(&Type), Name, RefArgs) | AsmIn], AsmOut) :-
+    var(Term) ->
+        AsmOut = [destruct_ref(Term::(&Type), Name, RefArgs) | AsmMid],
+        trace(AsmIn),
+        !specialize(AsmIn, AsmMid)
         ;
-        RefTerm = Term),
-    Asm1 = [destruct(RefTerm, Name, Args) | AsmIn], 
-    trace(Asm1),
-    specialize(Asm1, AsmOut).
+        Term =.. [Name | Args],
+        !makeRefTypes(Args, RefArgs),
+        trace(AsmIn),
+        !specialize(AsmIn, AsmOut).
 specialize([call(Name, Args, TypeGuard, Result) | AsmIn], AsmOut) :-
-    function_impl(Name, TypeGuard, Args, Body, Result) ->
+    removeRefs(Args, ArgsNoRefs),
+    (function_impl(Name, TypeGuard, ArgsNoRefs, Body, Result) ->
         append(Body, AsmIn, Asm1),
         trace(Asm1),
         !specialize(Asm1, AsmOut)
         ;
-        ground(Args),
-        removeRefs(Args, ArgsNoRefs),
+        forall(member(ArgNoRefs::_, ArgsNoRefs), ground(ArgNoRefs)),
         Func =.. [Name | ArgsNoRefs],
         constant_propagation(Func, Result) ->
             trace(AsmIn),
             !specialize(AsmIn, AsmOut)
             ;
-            AsmOut = [call(Name, Args, TypeGuard, Result) | Asm2],
+            AsmOut = [call(Name, ArgsNoRefs, TypeGuard, Result) | Asm2],
             trace(AsmIn),
-            !specialize(AsmIn, Asm2).
+            !specialize(AsmIn, Asm2)).
 specialize([case(Expr, Branches) | AsmIn], AsmOut) :-
     var(Expr) ->
         AsmOut = [case(Expr, Branches) | Asm1],
@@ -1448,16 +1451,23 @@ lambdaMacro(X, Y, TypeModifier, ClassName, MethodName, Replacement) :-
     !extractLambda(X, Y, TypeModifier, ClassName, MethodName,
         StructDef, InstanceDef, Replacement),
     !unnameVars(StructDef, StructDef1, StructDefVNs),
-    !compileStatement(StructDef1, StructDefVNs),
+    replaceInTerm(StructDef1, removeTypes, StructDef2),
+    !compileStatement(StructDef2, StructDefVNs),
     !unnameVars(InstanceDef, InstanceDef1, InstanceDefVNs),
-    !compileStatement(InstanceDef1, InstanceDefVNs).
+    replaceInTerm(InstanceDef1, removeTypes, InstanceDef2),
+    !compileStatement(InstanceDef2, InstanceDefVNs).
+
+removeTypes(Var::_, Var).
 
 removeRefs([], []).
 removeRefs([Arg | Args], [ArgNoRefs | ArgsNoRefs]) :-
-    (Arg = &ArgNoRefs ->
-        true
+    (nonvar(Arg), Arg = &Var::Type ->
+        ArgNoRefs = Var::(&Type)
         ;
-        ArgNoRefs = Arg),
+        nonvar(Arg), Arg = *Var::(&Type) ->
+            ArgNoRefs = Var::Type
+            ;
+            ArgNoRefs = Arg),
     removeRefs(Args, ArgsNoRefs).
 
 inferTypeClasses([]).
@@ -1534,6 +1544,16 @@ assertAssumptions([T:C | Assumptions]) :-
         !class_instance(T, C, InstanceAssumptions),
         assertAssumptions(InstanceAssumptions)),
     assertAssumptions(Assumptions).
+
+makeRefTypes([], []).
+makeRefTypes([Arg::Type | Args], [Arg::(&Type) | RefArgs]) :-
+    makeRefTypes(Args, RefArgs).
+
+makeDerefTypes([], []).
+makeDerefTypes([Arg::Type | Args], [Arg::Type | RefArgs]) :-
+    makeDerefTypes(Args, RefArgs).
+makeDerefTypes([*Arg::(&Type) | Args], [Arg::Type | RefArgs]) :-
+    makeDerefTypes(Args, RefArgs).
 
 % ============= Prelude =============
 :- compileStatement((class T : delete where { X del T -> X }),
