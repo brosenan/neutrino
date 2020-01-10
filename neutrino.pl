@@ -1707,19 +1707,24 @@ test(destruct_empty_option) :-
     microAsm([destruct(_::(&maybe(string)), none, [])], UAsm),
     UAsm =@= [].
 
-% In case commands each branch is converted separately.
+% In case commands each branch is converted separately. assign commands are removed
+% and the result variables are bound together.
 test(case) :-
     microAsm([case(M::(&maybe(string)),
                 [[destruct(M::(&maybe(string)), just, [S::(&string)]),
-                  call(foo, [S::(&string)], [], _::bool)],
-                 [destruct(M::(&maybe(string)), none, [])]]),
+                  call(foo, [S::(&string)], [], X::bool),
+                  assign(X::bool, Result::bool)],
+                 [destruct(M::(&maybe(string)), none, []),
+                  construct(true, [], True::bool),
+                  assign(True::bool, Result::bool)]]),
               literal(3, _::int64)], UAsm),
     UAsm =@= [case(M1::(&maybe(string)),
                 [[read_field(M1::(&maybe(string)), 1, S1::(&string)),
                   deallocate(M1::(&maybe(string)), 2),
-                  call(foo, [S1::(&string)], [], _::bool)],
-                 []]),
+                  call(foo, [S1::(&string)], [], Result1::bool)],
+                 [assign_sentinel(0,Result1::bool)]]),
               literal(3, _::int64)].
+
 
 :- end_tests(microAsm).
 
@@ -1741,7 +1746,10 @@ microAsm([Cmd | Asm], UAsm) :-
                     branchesMicroAssembly(Branches, BranchesUAsm),
                     UAsm = [case(Val, BranchesUAsm) | RestUAsm]
                     ;
-                    UAsm = [Cmd | RestUAsm]),
+                    Cmd = assign(A, A) ->
+                        UAsm = RestUAsm
+                        ;
+                        UAsm = [Cmd | RestUAsm]),
     microAsm(Asm, RestUAsm).
 
 constructMicroAsm(Name, Args, Struct, [allocate(Arity, Struct)]) :-
@@ -1904,7 +1912,6 @@ test(case) :-
                [read_field(Foo::footype, 1, field(Foo::footype, 2)::int64),
                 read_field(Foo::footype, 2, field(Foo::footype, 2)::int64)]]),
                literal("hello", _::string)], UAsm),
-    writeln(UAsm),
     UAsm =@= [case(_::footype, [
                [read_field(Foo1::footype, 1, field(_::footype, 1)::int64)],
                [read_field(Foo1::footype, 1, field(Foo1::footype, 2)::int64)]]),
@@ -1929,6 +1936,50 @@ reuseDataInBranches([], []).
 reuseDataInBranches([Branch | Branches], [OptBranch | OptBranches]) :-
     reuseData(Branch, OptBranch),
     reuseDataInBranches(Branches, OptBranches).
+
+:- begin_tests(backend).
+
+test(list_sum) :-
+    !compileStatement((declare list_sum(list(int64)) -> int64), []),
+    !compileStatement((list_sum(L) := case L of {
+        [] => 0;
+        [N | Ns] => N + list_sum(Ns)
+    }), ['L'=L, 'N'=N, 'Ns'=Ns]),
+    !function_impl(list_sum, [], [L1::list(int64)], Asm, _::int64),
+    !microAsm(Asm, UAsm1),
+    !reuseSpace(UAsm1, UAsm2),
+    !reuseData(UAsm2, UAsm),
+    UAsm =@= [case(L1::list(int64),[
+                [literal(0,Res::int64)],
+                [read_field(L1::list(int64),1,N1::int64),
+                read_field(L1::list(int64),2,Ns1::list(int64)),
+                call(list_sum,[Ns1::list(int64)],[],SumOfNs::int64),
+                call(+,[N1::int64,SumOfNs::int64],[int64:plus],Res::int64),
+                deallocate(L1::list(int64),3)]])].
+
+test(increment_list) :-
+    !compileStatement((declare increment_list(list(int64)) -> list(int64)), []),
+    !compileStatement((increment_list(L) := case L of {
+        [] => [];
+        [N | Ns] => [N + 1 | increment_list(Ns)]
+    }), ['L'=L, 'N'=N, 'Ns'=Ns]),
+    !function_impl(increment_list, [], [L1::list(int64)], Asm, _::list(int64)),
+    !microAsm(Asm, UAsm1),
+    !reuseSpace(UAsm1, UAsm2),
+    !reuseData(UAsm2, UAsm),
+    writeln(UAsm),
+    UAsm =@= [case(L1::list(int64),[
+                [assign_sentinel(0,L1::list(int64))],
+                [read_field(L1::list(int64),1,N1::int64),
+                 read_field(L1::list(int64),2,Ns1::list(int64)),
+                 literal(1,field(L1::list(int64),0)::int64),
+                 literal(1,One::int64),
+                 call(+,[N1::int64,One::int64],[int64:plus],
+                    field(L1::list(int64),1)::int64),
+                 call(increment_list,[Ns1::list(int64)],[],
+                    field(L1::list(int64),2)::list(int64))]])].
+
+:- end_tests(backend).
 
 % ============= Prelude =============
 :- compileStatement((class T : delete where { X del T -> X }),
