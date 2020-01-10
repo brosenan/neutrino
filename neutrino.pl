@@ -1626,6 +1626,11 @@ normalizeBranches([Branch | Branches], [NormBranch | NormBranches]) :-
 
 :- begin_tests(microAsm).
 
+% Micro-assembly is a language similar to our assembly language, in which memory
+% operations (construct, destruct and destruct_ref) are broken down into smaller
+% pieces, namely allocate() and deallocate() for memory management, and field()
+% and read_field() to access individual fields.
+
 % Calls & literals are unaffected by microAsm.
 test(unaffected) :-
     microAsm([literal(2, Two::int64),
@@ -1799,6 +1804,9 @@ branchesMicroAssembly([Branch | Branches], [BranchUAsm | BranchesUAsm]) :-
 
 :- begin_tests(reuseSpace).
 
+% The reuseSpace optimization removes deallocations followed by allocations of
+% memory of the same size. In shuch cases, the pointer can simply be reused.
+
 % Micro-assembly code that does not include matching allocation and deallocation
 % operations is left unchanged.
 test(untouched) :-
@@ -1868,6 +1876,59 @@ reuseSpaceInBranches([], []).
 reuseSpaceInBranches([Branch | Branches], [OptBranch | OptBranches]) :-
     reuseSpace(Branch, OptBranch),
     reuseSpaceInBranches(Branches, OptBranches).
+
+:- begin_tests(reuseData).
+
+% The reuseData optimization removes read_field() commands which read a field to itself.
+% Such commands can be a result of destructing something and immediately afterwards
+% constructing the same type of object, with some of the fields having the same values.
+% In such cases, the reuseSpace optimization reuses the object and this optimization
+% removes the need to copy values to themselves.
+
+% reuseData removes micro-assembly commands which read a field to itself.
+test(read_field) :-
+    reuseData([literal("hello", S::string),
+               read_field(Foo::footype, 1, field(Foo::footype, 1)::int64),
+               read_field(Foo::footype, 1, field(_::footype, 1)::int64),
+               read_field(Foo::footype, 1, field(Foo::footype, 2)::int64),
+               read_field(Foo::footype, 2, field(Foo::footype, 2)::int64)], UAsm),
+    UAsm =@= [literal("hello", S::string),
+                read_field(Foo::footype, 1, field(_::footype, 1)::int64),
+                read_field(Foo::footype, 1, field(Foo::footype, 2)::int64)].
+
+% The case command applies this optimization on each branch.
+test(case) :-
+    reuseData([case(_::footype, [
+               [read_field(Foo::footype, 1, field(Foo::footype, 1)::int64),
+                read_field(Foo::footype, 1, field(_::footype, 1)::int64)],
+               [read_field(Foo::footype, 1, field(Foo::footype, 2)::int64),
+                read_field(Foo::footype, 2, field(Foo::footype, 2)::int64)]]),
+               literal("hello", _::string)], UAsm),
+    writeln(UAsm),
+    UAsm =@= [case(_::footype, [
+               [read_field(Foo1::footype, 1, field(_::footype, 1)::int64)],
+               [read_field(Foo1::footype, 1, field(Foo1::footype, 2)::int64)]]),
+               literal("hello", _::string)].
+:- end_tests(reuseData).
+
+reuseData([], []).
+reuseData([Cmd | UAsmIn], UAsmOut) :-
+    Cmd = read_field(Obj1, N1, field(Obj2, N2)::_),
+    (Obj1, N1) == (Obj2, N2) ->
+        reuseData(UAsmIn, UAsmOut)
+        ;
+        Cmd = case(Expr, Branches) ->
+            reuseDataInBranches(Branches, OptBranches),
+            UAsmOut = [case(Expr, OptBranches) | UAsmMid],
+            reuseData(UAsmIn, UAsmMid)
+            ;
+            UAsmOut = [Cmd | UAsmMid],
+            reuseData(UAsmIn, UAsmMid).
+
+reuseDataInBranches([], []).
+reuseDataInBranches([Branch | Branches], [OptBranch | OptBranches]) :-
+    reuseData(Branch, OptBranch),
+    reuseDataInBranches(Branches, OptBranches).
 
 % ============= Prelude =============
 :- compileStatement((class T : delete where { X del T -> X }),
