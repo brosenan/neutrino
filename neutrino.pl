@@ -704,8 +704,8 @@ test(case) :-
         bar1('_'::float64) => false
     }), Val, [], Asm),
     (Val, Asm) =@= (Val,
-                    [literal(42,FourtyTwo::int64),
-                     construct(foo1,[FourtyTwo::int64],X::foobar1),
+                    [construct(foo1,[FourtyTwo::int64],X::foobar1),
+                     literal(42,FourtyTwo::int64),
                      case(X::foobar1,
                         [[destruct(X::foobar1,foo1,['A'::int64]),
                          literal(1,One::int64),
@@ -729,8 +729,8 @@ test(case_ref) :-
         &bar2('_'::(&string)) => false
     }), Val, [], Asm),
     (Val, Asm) =@= (Val,
-                    [literal("hello", Hello::string),
-                     construct(foo2, [Hello::string], X::foobar2),
+                    [construct(foo2, [Hello::string], X::foobar2),
+                     literal("hello", Hello::string),
                      case(X::foobar2,
                      [[destruct_ref(X::foobar2, foo2, ['A'::(&string)]),
                        call(==, ['A'::(&string), 'A'::(&string)], [], V1::bool),
@@ -762,7 +762,8 @@ assembly(Expr, Val, AsmIn, AsmOut) :-
         type_signature(Name, ArgTypes, Type, Assumptions),
         Val = _::Type,
         (is_constructor(Name, Arity) ->
-            assemblies(Args, Vals, [construct(Name, Vals, Val) | AsmIn], AsmOut)
+            AsmOut = [construct(Name, Vals, Val) | AsmMid],
+            assemblies(Args, Vals, AsmIn, AsmMid)
             ;
             assemblies(Args, Vals,
                 [call(Name, Vals, Assumptions, Val) | AsmIn], AsmOut)),
