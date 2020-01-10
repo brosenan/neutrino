@@ -26,6 +26,7 @@
 :- dynamic class_instance/3.
 :- dynamic fake_type/1.
 :- dynamic is_struct/1.
+:- dynamic is_option/2.
 :- dynamic function_impl/5.
 
 :- discontiguous constant_propagation/2.
@@ -88,7 +89,7 @@ compileStatement((union Union = Options), VNs) :-
     Union =.. [Name | Args],
     validateVars(Args),
     assert(type(Union)),
-    assertOptionSignatures(Options, Union),
+    assertOptionSignatures(Options, Union, 0, _),
     sumToList(Options, OptionList),
     assert(union_type(Union, OptionList)),
     !compileUnionDeleteInstance(Union, OptionList, VNs),
@@ -426,16 +427,18 @@ makeRef(T, &T).
 union_type(&Type, Options) :-
     union_type(Type, Options).
 
-assertOptionSignatures(Options, Type) :-
+assertOptionSignatures(Options, Type, N0, N9) :-
     my_callable(Options),
     Options = Op1 + Op2 ->
-        assertOptionSignatures(Op1, Type),
-        assertOptionSignatures(Op2, Type)
+        assertOptionSignatures(Op1, Type, N0, N1),
+        assertOptionSignatures(Op2, Type, N1, N9)
         ;
         Options =.. [Name | Args],
         assert(type_signature(Name, Args, Type, [])),
         length(Args, Arity),
-        assert(is_constructor(Name, Arity)).
+        assert(is_constructor(Name, Arity)),
+        assert(is_option(Name/Arity, N0)),
+        N9 is N0 + 1.
 
 validateCaseOptions((Branch; Branches),
         Type, OutType, Assumptions, FirstIndex, LastIndex) :-
@@ -1585,7 +1588,6 @@ test(case) :-
             [call(+, [3::int64, _::int64], [int64:plus], X::int64),
             destruct(_::footype, foo, [X::int64, _::int64])]
         ])], Asm),
-    writeln(Asm),
     Asm =@= [case(_::bartype, [
                 [literal(2, Two::int64),
                  call(+, [Two::int64, _::int64], [int64:plus], X::int64),
@@ -1604,7 +1606,6 @@ normalizeAssembly([Cmd | AsmIn], AsmOut) :-
         splitTypes(Vals, _, ArgTypes),
         !assemblies(ArgsNoTypes, Vals,
             [call(Name, Vals, Guard, Ret)], CallAsm),
-        writeln(dest=CallAsm),
         !append(CallAsm, AsmMid, AsmOut)
         ;
         Cmd = case(Cond, Branches) ->
@@ -1622,6 +1623,179 @@ normalizeBranches([], []).
 normalizeBranches([Branch | Branches], [NormBranch | NormBranches]) :-
     normalizeAssembly(Branch, NormBranch),
     normalizeBranches(Branches, NormBranches).
+
+:- begin_tests(microAsm).
+
+% Calls & literals are unaffected by microAsm.
+test(unaffected) :-
+    microAsm([literal(2, Two::int64),
+              call(+, [Two::int64, X::int64], [int64:plus], XPlusTwo::int64)], UAsm),
+    UAsm == [literal(2, Two::int64),
+             call(+, [Two::int64, X::int64], [int64:plus], XPlusTwo::int64)].
+
+% construct() of a struct with one or more elements is replaced by allocate() with 
+% the number of fields, and the fields themselves are bound with field() with the
+% respective offset of each field.
+test(construct_struct) :-
+    microAsm([construct(',', [X::int64, S::string], _::(int64, string)),
+              literal(7, X::int64),
+              literal("hello", S::string)], UAsm),
+    UAsm =@= [allocate(2, Struct::(int64, string)),
+              literal(7, field(Struct::(int64, string), 0)::int64),
+              literal("hello", field(Struct::(int64, string), 1)::string)].
+
+% construct of a union type with one or more elements is replaced with allocate() with
+% the number of fields + 1 (for the option number), and an assignment of field 0 to the
+% option number. Fields are then numbered starting at 1.
+test(construct_option) :-
+    microAsm([construct(just, [S::string], _::maybe(string)),
+              literal("hello", S::string)], UAsm),
+    UAsm =@= [allocate(2, Struct::maybe(string)),
+              literal(0, field(Struct::maybe(string), 0)::int64),
+              literal("hello", field(Struct::maybe(string), 1)::string)].
+
+% Constructing an option of arity zero assigns a sentinel with the value of the option.
+test(construct_empty_option) :-
+    microAsm([construct(none, [], None::maybe(string)),
+              call(==, [None::maybe(string), _::maybe(string)], [], _::bool)], UAsm),
+    UAsm =@= [assign_sentinel(1, None1::maybe(string)),
+              call(==, [None1::maybe(string), _::maybe(string)], [], _::bool)].
+
+% destruct_ref of a struct maps to a sequence of read_field() commands starting with
+% offset 0.
+test(destruct_ref_struct) :-
+    microAsm([destruct_ref(_::(&((int64, string))), ',', [A::(&int64), S::(&string)]),
+              call(foo, [A::(&int64), S::(&string)], [], _::bool)], UAsm),
+    UAsm =@= [read_field(Tuple::(&((int64,string))), 0, A1::(&int64)),
+              read_field(Tuple::(&((int64,string))), 1, S1::(&string)),
+              call(foo, [A1::(&int64), S1::(&string)], [], _::bool)].
+
+% destruct_ref of a union option maps to a sequence of read_field() commands starting
+% with offset 1 (as offset 0 is reserved for the option indicator).
+test(destruct_ref_option) :-
+    microAsm([destruct_ref(_::(&maybe(string)), just, [S::(&string)]),
+              call(foo, [S::(&string)], [], _::bool)], UAsm),
+    UAsm =@= [read_field(_::(&maybe(string)), 1, S1::(&string)),
+              call(foo, [S1::(&string)], [], _::bool)].
+
+% destruct of a struct maps to a sequence of read_field() commands starting at 0,
+% followed by a deallocate() command with the arity.
+test(destruct_struct) :-
+    microAsm([destruct(_::(&((int64, string))), ',', [A::(&int64), S::(&string)]),
+              call(foo, [A::(&int64), S::(&string)], [], _::bool)], UAsm),
+    UAsm =@= [read_field(Tuple::(&((int64,string))), 0, A1::(&int64)),
+              read_field(Tuple::(&((int64,string))), 1, S1::(&string)),
+              deallocate(Tuple::(&((int64,string))), 2),
+              call(foo, [A1::(&int64), S1::(&string)], [], _::bool)].
+
+% destruct of a non-empty union option maps to a sequence of read_field() commands
+% starting at 1, followed by a deallocate() with the arity + 1.
+test(destruct_option) :-
+    microAsm([destruct(_::(&maybe(string)), just, [S::(&string)]),
+              call(foo, [S::(&string)], [], _::bool)], UAsm),
+    UAsm =@= [read_field(Maybe::(&maybe(string)), 1, S1::(&string)),
+              deallocate(Maybe::(&maybe(string)), 2),
+              call(foo, [S1::(&string)], [], _::bool)].
+
+% destruct of an empty union option is ignored.
+test(destruct_empty_option) :-
+    microAsm([destruct(_::(&maybe(string)), none, [])], UAsm),
+    UAsm =@= [].
+
+% In case commands each branch is converted separately.
+test(case) :-
+    microAsm([case(M::(&maybe(string)),
+                [[destruct(M::(&maybe(string)), just, [S::(&string)]),
+                  call(foo, [S::(&string)], [], _::bool)],
+                 [destruct(M::(&maybe(string)), none, [])]]),
+              literal(3, _::int64)], UAsm),
+    UAsm =@= [case(M1::(&maybe(string)),
+                [[read_field(M1::(&maybe(string)), 1, S1::(&string)),
+                  deallocate(M1::(&maybe(string)), 2),
+                  call(foo, [S1::(&string)], [], _::bool)],
+                 []]),
+              literal(3, _::int64)].
+
+:- end_tests(microAsm).
+
+microAsm([], []).
+microAsm([Cmd | Asm], UAsm) :-
+    (Cmd = construct(Name, Args, Val) ->
+        once(constructMicroAsm(Name, Args, Val, ConsUAsm)),
+        append(ConsUAsm, RestUAsm, UAsm)
+        ;
+        Cmd = destruct(Val, Name, Args) ->
+            once(destructMicroAsm(Val, Name, Args, DestUAsm)),
+            append(DestUAsm, RestUAsm, UAsm)
+            ;
+            Cmd = destruct_ref(Val, Name, Args) ->
+                once(destructRefMicroAsm(Val, Name, Args, DestUAsm)),
+                append(DestUAsm, RestUAsm, UAsm)
+                ;
+                Cmd = case(Val, Branches) ->
+                    branchesMicroAssembly(Branches, BranchesUAsm),
+                    UAsm = [case(Val, BranchesUAsm) | RestUAsm]
+                    ;
+                    UAsm = [Cmd | RestUAsm]),
+    microAsm(Asm, RestUAsm).
+
+constructMicroAsm(Name, Args, Struct, [allocate(Arity, Struct)]) :-
+    length(Args, Arity),
+    is_struct(Name/Arity),
+    assignFields(Args, Struct, 0).
+
+constructMicroAsm(Name, Args, Struct, [allocate(ArityPlusOne, Struct),
+                                       literal(N, field(Struct, 0)::int64)]) :-
+    length(Args, Arity),
+    is_option(Name/Arity, N),
+    Arity > 0,
+    ArityPlusOne is Arity + 1,
+    assignFields(Args, Struct, 1).
+
+constructMicroAsm(Name, [], Struct, [assign_sentinel(N, Struct)]) :-
+    is_option(Name/0, N).
+
+destructMicroAsm(Val, Name, Args, DestUAsm) :-
+    length(Args, Arity),
+    is_struct(Name/Arity),
+    readFieldsMicroAsm(Args, Val, 0, ReadFields),
+    append(ReadFields, [deallocate(Val, Arity)], DestUAsm).
+
+destructMicroAsm(Val, Name, Args, DestUAsm) :-
+    length(Args, Arity),
+    Arity > 0,
+    is_option(Name/Arity, _),
+    readFieldsMicroAsm(Args, Val, 1, ReadFields),
+    ArityPlusOne is Arity + 1,
+    append(ReadFields, [deallocate(Val, ArityPlusOne)], DestUAsm).
+
+destructMicroAsm(_, Name, [], []) :-
+    is_option(Name/0, _).
+
+destructRefMicroAsm(Val, Name, Args, DestUAsm) :-
+    length(Args, Arity),
+    is_struct(Name/Arity),
+    readFieldsMicroAsm(Args, Val, 0, DestUAsm).
+
+destructRefMicroAsm(Val, Name, Args, DestUAsm) :-
+    length(Args, Arity),
+    is_option(Name/Arity, _),
+    readFieldsMicroAsm(Args, Val, 1, DestUAsm).
+
+assignFields([], _, _).
+assignFields([field(Struct, N)::_ | Args], Struct, N) :-
+    N1 is N + 1,
+    assignFields(Args, Struct, N1).
+
+readFieldsMicroAsm([], _, _, []).
+readFieldsMicroAsm([Arg | Args], Val, N, [read_field(Val, N, Arg) | DestUAsm]) :-
+    N1 is N + 1,
+    readFieldsMicroAsm(Args, Val, N1, DestUAsm).
+
+branchesMicroAssembly([], []).
+branchesMicroAssembly([Branch | Branches], [BranchUAsm | BranchesUAsm]) :-
+    microAsm(Branch, BranchUAsm),
+    branchesMicroAssembly(Branches, BranchesUAsm).
 % ============= Prelude =============
 :- compileStatement((class T : delete where { X del T -> X }),
     ['T'=T, 'X'=X]).
