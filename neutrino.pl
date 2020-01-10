@@ -1556,6 +1556,72 @@ makeDerefTypes([Arg::Type | Args], [Arg::Type | RefArgs]) :-
 makeDerefTypes([*Arg::(&Type) | Args], [Arg::Type | RefArgs]) :-
     makeDerefTypes(Args, RefArgs).
 
+:- begin_tests(normalizeAssembly).
+
+% destruct() and destruct_ref() are not affected by normalizeAssembly.
+test(ignoring_destruct) :-
+    !normalizeAssembly(
+        [destruct(Foo::footype, foo, [X::int64, Y::int64]),
+         destruct_ref(Bar::(&bartype), bar, [Z::(&int64), S::(&string)])], Asm),
+    Asm == [destruct(Foo::footype, foo, [X::int64, Y::int64]),
+            destruct_ref(Bar::(&bartype), bar, [Z::(&int64), S::(&string)])].
+
+% call() with a non-variable terms as arguments is preceded with construction 
+% of the term.
+test(call) :-
+    !normalizeAssembly(
+        [call(+, [2::int64, _::int64], [int64:plus], X::int64),
+         destruct(_::footype, foo, [X::int64, _::int64])], Asm),
+    Asm =@= [literal(2, Two::int64),
+             call(+, [Two::int64, _::int64], [int64:plus], X1::int64),
+             destruct(_::footype, foo, [X1::int64, _::int64])].
+
+% For case() we process each branch.
+test(case) :-
+    !normalizeAssembly(
+        [case(_::bartype, [
+            [call(+, [2::int64, _::int64], [int64:plus], X::int64),
+            destruct(_::footype, foo, [X::int64, _::int64])],
+            [call(+, [3::int64, _::int64], [int64:plus], X::int64),
+            destruct(_::footype, foo, [X::int64, _::int64])]
+        ])], Asm),
+    writeln(Asm),
+    Asm =@= [case(_::bartype, [
+                [literal(2, Two::int64),
+                 call(+, [Two::int64, _::int64], [int64:plus], X::int64),
+                 destruct(_::footype, foo, [X::int64, _::int64])],
+                [literal(3, Three::int64),
+                 call(+, [Three::int64, _::int64], [int64:plus], X::int64),
+                 destruct(_::footype, foo, [X::int64, _::int64])]
+            ])].
+
+:- end_tests(normalizeAssembly).
+
+normalizeAssembly([], []).
+normalizeAssembly([Cmd | AsmIn], AsmOut) :-
+    (Cmd = call(Name, Args, Guard, Ret) ->
+        splitTypes(Args, ArgsNoTypes, ArgTypes),
+        splitTypes(Vals, _, ArgTypes),
+        !assemblies(ArgsNoTypes, Vals,
+            [call(Name, Vals, Guard, Ret)], CallAsm),
+        writeln(dest=CallAsm),
+        !append(CallAsm, AsmMid, AsmOut)
+        ;
+        Cmd = case(Cond, Branches) ->
+            normalizeBranches(Branches, NormBranches),
+            AsmOut = [case(Cond, NormBranches) | AsmMid]
+            ;
+            AsmOut = [Cmd | AsmMid]),
+    !normalizeAssembly(AsmIn, AsmMid).
+
+splitTypes([], [], []).
+splitTypes([Arg::Type | Args], [Arg | ArgsNoTypes], [Type | ArgTypes]) :-
+    splitTypes(Args, ArgsNoTypes, ArgTypes).
+
+normalizeBranches([], []).
+normalizeBranches([Branch | Branches], [NormBranch | NormBranches]) :-
+    normalizeAssembly(Branch, NormBranch),
+    normalizeBranches(Branches, NormBranches).
 % ============= Prelude =============
 :- compileStatement((class T : delete where { X del T -> X }),
     ['T'=T, 'X'=X]).
