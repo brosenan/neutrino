@@ -1796,6 +1796,79 @@ branchesMicroAssembly([], []).
 branchesMicroAssembly([Branch | Branches], [BranchUAsm | BranchesUAsm]) :-
     microAsm(Branch, BranchUAsm),
     branchesMicroAssembly(Branches, BranchesUAsm).
+
+:- begin_tests(reuseSpace).
+
+% Micro-assembly code that does not include matching allocation and deallocation
+% operations is left unchanged.
+test(untouched) :-
+    reuseSpace([allocate(3, Foo:footype),
+                call(bar, [Foo::footype], Bar::bartype),
+                deallocate(Foo::footype, 3)], UAsm),
+    UAsm == [allocate(3, Foo:footype),
+             call(bar, [Foo::footype], Bar::bartype),
+             deallocate(Foo::footype, 3)].
+
+% Code that has a deallocation followed (not necessarily directly) by a matching
+% allocation of the same size is removed along with the allocation. The variables
+% containing both allocations are unified.
+test(remove_allocation) :-
+    reuseSpace([allocate(3, Foo:footype),
+                call(bar, [Foo::footype], Bar::bartype),
+                deallocate(Foo::footype, 3),
+                literal(3, _::int64),
+                allocate(3, Bar::bartype),
+                literal("hello", field(Bar::bartype, 2)::string)], UAsm),
+    UAsm =@= [allocate(3, Common:footype),
+              call(bar, [Common::footype], Common::bartype),
+              literal(3, _::int64),
+              literal("hello", field(Common::bartype, 2)::string)].
+
+
+% In a case command, each branch is considered by itself.
+test(case) :-
+    reuseSpace([case(X::footype, [
+                [deallocate(X::footype, 3),
+                 read_field(X::footype, 1, _::int64),
+                 allocate(3, Bar::bartype),
+                 literal("hello", field(Bar::bartype, 2)::string)],
+                [deallocate(X::footype, 2),
+                 read_field(X::footype, 1, _::int64),
+                 allocate(2, Bar::bartype),
+                 literal("world", field(Bar::bartype, 1)::string)]]),
+                literal(4, _::int64)], UAsm),
+    UAsm =@= [case(X1::footype, [
+                [read_field(X1::footype, 1, _::int64),
+                 literal("hello", field(X1::bartype, 2)::string)],
+                [read_field(X1::footype, 1, _::int64),
+                 literal("world", field(X1::bartype, 1)::string)]]),
+                literal(4, _::int64)].
+:- end_tests(reuseSpace).
+
+reuseSpace([], []).
+reuseSpace([Cmd | UAsmIn], UAsmOut) :-
+    Cmd = deallocate(Alloc, Size) ->
+        once(reuseSpace(UAsmIn, Alloc, Size, UAsmOut))
+        ;
+        Cmd = case(Expr, Branches) ->
+            reuseSpaceInBranches(Branches, OptBranches),
+            UAsmOut = [case(Expr, OptBranches) | UAsmMid],
+            reuseSpace(UAsmIn, UAsmMid)
+            ;
+            UAsmOut = [Cmd | UAsmMid],
+            reuseSpace(UAsmIn, UAsmMid).
+
+reuseSpace([], Alloc, Size, [deallocate(Alloc, Size)]).
+reuseSpace([allocate(Size, Var::_) | UAsmIn], Var::_, Size, UAsmOut) :-
+    reuseSpace(UAsmIn, UAsmOut).
+reuseSpace([Cmd | UAsmIn], Alloc, Size, [Cmd | UAsmOut]) :-
+    reuseSpace(UAsmIn, Alloc, Size, UAsmOut).
+
+reuseSpaceInBranches([], []).
+reuseSpaceInBranches([Branch | Branches], [OptBranch | OptBranches]) :-
+    reuseSpace(Branch, OptBranch),
+    reuseSpaceInBranches(Branches, OptBranches).
+
 % ============= Prelude =============
 :- compileStatement((class T : delete where { X del T -> X }),
     ['T'=T, 'X'=X]).
