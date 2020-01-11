@@ -1835,7 +1835,6 @@ test(remove_allocation) :-
                 literal(3, _::int64),
                 allocate(3, Bar::bartype),
                 literal("hello", field(Bar::bartype, 2)::string)], UAsm),
-    writeln(UAsm),
     UAsm =@= [allocate(3, Common:footype),
               call(bar, [Common::footype], Common::bartype),
               literal(3, _::int64),
@@ -1953,7 +1952,93 @@ reuseDataInBranches([Branch | Branches], [OptBranch | OptBranches]) :-
 % function does) with a loop-back to the beginning of the function, while updating
 % the argument values.
 
+% The tre predicate takes details about a function and its micro-assembly, and returns
+% a modified version of the micro-assembly, in which tail recursion (to the same
+% variant of the function) is replaced with a recur command.
+
+% In case there is no tail recursion, it adds a return command at the end of the code,
+% indicating there is no looping.
+test(no_tre) :-
+    tre([literal(2, Two::int64),
+         literal(3, Three:int64),
+         call(+, [Two::int64, Three:int64], [int64:plus], ret_val::int64)],
+        foo, [_::int64, _::int64], [], UAsm),
+    UAsm == [literal(2, Two::int64),
+             literal(3, Three:int64),
+             call(+, [Two::int64, Three:int64], [int64:plus], ret_val::int64),
+             return].
+
+% If the last command is a call with matching name, arg-types and guard, it is replaced
+% with recur.
+test(tre) :-
+    tre([literal(2, Two::int64),
+         literal(3, Three:int64),
+         call(+, [Two::int64, Three::int64], [int64:plus], ret_val::int64)],
+        +, [_::int64, _::int64], [int64:plus], UAsm),
+    UAsm == [literal(2, Two::int64),
+             literal(3, Three:int64),
+             recur([Two::int64, Three::int64], ret_val::int64)].
+
+% If the last command is case, tre recurses to all its branches.
+test(case) :-
+    tre([case(arg(0)::bool, [
+            [literal(2, Two::int64),
+             literal(3, Three:int64),
+             call(+, [Two::int64, Three::int64], [int64:plus], ret_val::int64)],
+            [literal(4, Four::int64),
+             literal(5, Five:int64),
+             call(+, [Four::int64, Five::int64], [int64:plus], ret_val::int64)]])],
+        +, [_::int64, _::int64], [int64:plus], UAsm),
+    UAsm == [case(arg(0)::bool, [
+                [literal(2, Two::int64),
+                 literal(3, Three:int64),
+                 recur([Two::int64, Three::int64], ret_val::int64)],
+                [literal(4, Four::int64),
+                 literal(5, Five:int64),
+                 recur([Four::int64, Five::int64], ret_val::int64)]])].
+
+% When the tail recursion uses arguments, they need to first be copied out to temporary
+% variables to avoid having the assignment done by recur alter their values.
+test(tre_with_args) :-
+    tre([call(+, [arg(1)::int64, arg(0)::int64], [int64:plus], ret_val::int64)],
+        +, [_::int64, _::int64], [int64:plus], UAsm),
+    UAsm =@= [assign(arg(0)::int64, Arg0::int64),
+              assign(arg(1)::int64, Arg1::int64),
+              recur([Arg1::int64, Arg0::int64], ret_val::int64)].
+
 :- end_tests(tre).
+
+tre(UAsmIn, Name, Params, Guard, UAsmOut) :-
+    UAsmIn = [A, B | Rest] ->
+        UAsmOut = [A | UAsmMid],
+        tre([B | Rest], Name, Params, Guard, UAsmMid)
+        ;
+        treLast(UAsmIn, Name, Params, Guard, UAsmOut) ->
+            true
+            ;
+            append(UAsmIn, [return], UAsmOut).
+
+treLast([call(Name, Params, Guard, Ret)], Name, Params, Guard, UAsm) :-
+    walk(Params, findArgsInRecur, [], AssignCommands),
+    replaceInTerm(Params, replaceArgsInRecur(AssignCommands), ParamsNoArgs),
+    append(AssignCommands, [recur(ParamsNoArgs, Ret)], UAsm).
+
+treLast([case(Expr, Branches)], Name, Params, Guard, [case(Expr, TreBranches)]) :-
+    treBranches(Branches, Name, Params, Guard, TreBranches).
+
+treBranches([], _, _, _, []).
+treBranches([Branch | Branches], Name, Params, Guard, [TreBranch | TreBranches]) :-
+    tre(Branch, Name, Params, Guard, TreBranch),
+    treBranches(Branches, Name, Params, Guard, TreBranches).
+
+findArgsInRecur(arg(N)::Type, AssignCommands,
+        [assign(arg(N)::Type, _::Type) | AssignCommands]) :-
+    nonvar(N).
+
+replaceArgsInRecur(AssignCommands, arg(N)::Type, Var::Type) :-
+    nonvar(N),
+    member(assign(arg(N)::Type, Var::Type), AssignCommands).
+    
 
 :- begin_tests(backend).
 
@@ -1963,18 +2048,21 @@ test(list_sum) :-
         [] => Sum;
         [N | Ns] => list_sum(Ns, Sum + N)
     }), ['L'=L, 'N'=N, 'Ns'=Ns, 'Sum'=Sum]),
-    !function_impl(list_sum, [], Args, Asm, ret_val::int64),
+    !function_impl(list_sum, Guard1, Args, Asm, ret_val::int64),
+    copy_term((Args, Guard1), (Params, Guard)),
     !assignArgs(Args, 0),
     !microAsm(Asm, UAsm1),
     !reuseSpace(UAsm1, UAsm2),
-    !reuseData(UAsm2, UAsm),
+    !reuseData(UAsm2, UAsm3),
+    !tre(UAsm3, list_sum, Params, Guard, UAsm),
     UAsm =@= [case(arg(0)::list(int64),[
-        [assign(arg(1)::int64, ret_val::int64)],
+        [assign(arg(1)::int64, ret_val::int64),
+         return],
         [read_field(arg(0)::list(int64),1,N1::int64),
          read_field(arg(0)::list(int64),2,Ns1::list(int64)),
          deallocate(arg(0)::list(int64),3),
          call(+,[arg(1)::int64,N1::int64],[int64:plus],ResultPlusN1::int64),
-         call(list_sum,[Ns1::list(int64),ResultPlusN1::int64],[],ret_val::int64)]])].
+         recur([Ns1::list(int64),ResultPlusN1::int64], ret_val::int64)]])].
 
 test(increment_list) :-
     !compileStatement((declare increment_list(list(int64)) -> list(int64)), []),
@@ -1982,22 +2070,49 @@ test(increment_list) :-
         [] => [];
         [N | Ns] => [N + 1 | increment_list(Ns)]
     }), ['L'=L, 'N'=N, 'Ns'=Ns]),
-    !function_impl(increment_list, [], Args, Asm, ret_val::list(int64)),
+    !function_impl(increment_list, Guard1, Args, Asm, ret_val::list(int64)),
+    copy_term((Args, Guard1), (Params, Guard)),
     !assignArgs(Args, 0),
     !microAsm(Asm, UAsm1),
     !reuseSpace(UAsm1, UAsm2),
-    !reuseData(UAsm2, UAsm),
-    UAsm =@= [[case(arg(0)::list(int64),[
-                [assign_sentinel(0,ret_val::list(int64))],
+    !reuseData(UAsm2, UAsm3),
+    !tre(UAsm3, increment_list, Params, Guard, UAsm),
+    UAsm =@= [case(arg(0)::list(int64),[
+                [assign_sentinel(0,ret_val::list(int64)),
+                 return],
                 [read_field(arg(0)::list(int64),1,N1::int64),
                  read_field(arg(0)::list(int64),2,Ns1::list(int64)),
                  assign(arg(0)::list(int64),ret_val::list(int64)),
                  literal(1,field(ret_val::list(int64),0)::int64),
                  literal(1,_9166::int64),
                  call(+,[N1::int64,_9166::int64],[int64:plus],
-                 field(ret_val::list(int64),1)::int64),
-                 call(increment_list,[Ns1::list(int64)],[],
+                    field(ret_val::list(int64),1)::int64),
+                 recur([Ns1::list(int64)],
                     field(ret_val::list(int64),2)::list(int64))]])].
+
+test(fibonacci) :-
+    !compileStatement((declare fibonacci(int64, int64, int64) -> int64), []),
+    !compileStatement((fibonacci(N, A, B) := if(N == 0,
+        A,
+        fibonacci(N-1, B, A+B))), ['A'=A, 'B'=B, 'N'=N]),
+    !function_impl(fibonacci, Guard1, Args, Asm, ret_val::int64),
+    copy_term((Args, Guard1), (Params, Guard)),
+    !assignArgs(Args, 0),
+    !microAsm(Asm, UAsm1),
+    !reuseSpace(UAsm1, UAsm2),
+    !reuseData(UAsm2, UAsm3),
+    tre(UAsm3, fibonacci, Params, Guard, UAsm),
+    UAsm =@= [literal(0,Zero::int64),
+              call(==,[arg(0)::int64,Zero::int64],[],IsZero::bool),
+              case(IsZero::bool,[
+                [assign(arg(1)::int64,ret_val::int64),
+                 return],
+                [literal(1,One::int64),
+                 call(-,[arg(0)::int64,One::int64],[int64:minus],NMinusOne::int64),
+                 call(+,[arg(1)::int64,arg(2)::int64],[int64:plus],APlusB::int64),
+                 assign(arg(2)::int64, Arg2::int64),
+                 recur([NMinusOne::int64,Arg2::int64,APlusB::int64],
+                    ret_val::int64)]])].
 
 :- end_tests(backend).
 
