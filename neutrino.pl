@@ -28,6 +28,7 @@
 :- dynamic is_struct/1.
 :- dynamic is_option/2.
 :- dynamic function_impl/5.
+:- dynamic unit_test/3.
 
 :- discontiguous constant_propagation/2.
 :- discontiguous type_signature/4.
@@ -40,7 +41,19 @@
 run(SourceFile) :-
     open(SourceFile, read, S),
     read_term(S, Term, [variable_names(VNs)]),
-    compileAll(SourceFile, S, Term, VNs).
+    compileAll(SourceFile, S, Term, VNs),
+    runAssertions.
+
+runAssertions :-
+    forall(unit_test(Asm, Result, SourceFile:Line), (
+        !specialize(Asm, Residual),
+        (\+(Result == true) ->
+            formatError(assertion_failed(Result, Residual), ErrorText),
+            writeln_list(user_error, [SourceFile, ":", Line, ": " | ErrorText]),
+            halt(1)
+            ;
+            true)
+    )).
 
 compileAll(SourceFile, S, Term, VNs) :-
     Term == end_of_file ->
@@ -48,11 +61,11 @@ compileAll(SourceFile, S, Term, VNs) :-
         ;
         catch(
             (
-                !compileStatement(Term, VNs)
+                line_count(S, Line),
+                !compileStatement(Term, VNs, SourceFile:Line)
             ),
             Exception,
             (
-                line_count(S, Line),
                 (formatError(Exception, ExceptionText) ->
                     true
                     ; 
@@ -63,7 +76,7 @@ compileAll(SourceFile, S, Term, VNs) :-
         read_term(S, NextTerm, [variable_names(NextVNs)]),
         compileAll(SourceFile, S, NextTerm, NextVNs).
 
-compileStatement((assert ExprWithMacros), VNs) :-
+compileStatement((assert ExprWithMacros), VNs, Location) :-
     nameVars(VNs),
     applyMacros(ExprWithMacros, Expr),
     inferType(Expr, Type, Assumptions),
@@ -72,20 +85,16 @@ compileStatement((assert ExprWithMacros), VNs) :-
     assembly(Expr, Result, [], Asm),
     linearityCheck(Asm, Result, [], _),
     unnameVars((Asm, Result), (UnAsm, UnResult::bool), _),
-    !specialize(UnAsm, Residual),
-    (\+(UnResult == true) ->
-        throw(assertion_failed(UnResult, Residual))
-        ;
-        true).
+    assert(unit_test(UnAsm, UnResult, Location)).
 
-compileStatement((Func := Body), VNs) :-
+compileStatement((Func := Body), VNs, _Location) :-
     nameVars(VNs),
     compileFunctionDefinition((Func := Body), _).
 
-compileStatement((declare Decl), VNs) :-
-    compileStatement((declare Decl), VNs, []).
+compileStatement((declare Decl), VNs, Location) :-
+    compileStatement((declare Decl), VNs, Location, []).
 
-compileStatement((union Union = Options), VNs) :-
+compileStatement((union Union = Options), VNs, _Location) :-
     Union =.. [Name | Args],
     validateVars(Args),
     assert(type(Union)),
@@ -98,7 +107,7 @@ compileStatement((union Union = Options), VNs) :-
     walk(Options, verifyVarIsType(Name), [], _),
     validateOptions(Options).
 
-compileStatement((struct Type = Constructor), VNs) :-
+compileStatement((struct Type = Constructor), VNs, _Location) :-
     Constructor =.. [ConsName | ConsArgs],
     assert(type_signature(ConsName, ConsArgs, Type, [])),
     length(ConsArgs, ConsArity),
@@ -112,23 +121,23 @@ compileStatement((struct Type = Constructor), VNs) :-
     walk(Constructor, verifyVarIsType(Name), [], _),
     validateTypes(ConsArgs).
 
-compileStatement((class T:C where {Decls}), VNs) :-
-    !compileStatement((class T:C where {Decls}), VNs, []).
+compileStatement((class T:C where {Decls}), VNs, Location) :-
+    !compileStatement((class T:C where {Decls}), VNs, Location, []).
 
-compileStatement((instance T:C where {Defs}), VNs) :-
-    compileStatement((instance T:C where {Defs}), VNs, []).
+compileStatement((instance T:C where {Defs}), VNs, Location) :-
+    compileStatement((instance T:C where {Defs}), VNs, Location, []).
 
-compileStatement((Context => Statement), VNs) :-
+compileStatement((Context => Statement), VNs, Location) :-
     tupleToList(Context, ContextAsList),
-    compileStatement(Statement, VNs, ContextAsList).
+    compileStatement(Statement, VNs, Location, ContextAsList).
 
-compileStatement((declare Func -> Type), VNs, Context) :-
+compileStatement((declare Func -> Type), VNs, _Location, Context) :-
     Func =.. [Name | ArgTypes],
     assert(type_signature(Name, ArgTypes, Type, Context)),
     nameVars(VNs),
     checkTypeFlow(Func, Context, Type).
 
-compileStatement((instance T:C where {Defs}), VNs, Context) :-
+compileStatement((instance T:C where {Defs}), VNs, _Location, Context) :-
     (type_class(C, T, Decls, ClassContext) ->
         true
         ;
@@ -139,7 +148,7 @@ compileStatement((instance T:C where {Defs}), VNs, Context) :-
     !validateInstance(Decls, Defs, T, C),
     compileMethods(Defs, ClassContext).
 
-compileStatement((class T:C where {Decls}), VNs, Context) :-
+compileStatement((class T:C where {Decls}), VNs, _Location, Context) :-
     ClassCtx = [T:C | Context],
     assert(type_class(C, T, Decls, ClassCtx)),
     (var(T) ->
@@ -701,7 +710,7 @@ test(nested_func) :-
 % then for each branch assembling a sequence that first destructs the pattern and
 % then builds the expression it maps to.
 test(case) :-
-    compileStatement((union foobar1 = foo1(int64) + bar1(float64)), []),
+    compileStatement((union foobar1 = foo1(int64) + bar1(float64)), [], test),
     assembly((case foo1(42) of {
         foo1('A'::int64) => 'A'::int64 == 1;
         bar1('_'::float64) => false
@@ -726,7 +735,7 @@ test(case) :-
 % the arguments but does not destroy the object), and in that deletes are
 % not placed.
 test(case_ref) :-
-    compileStatement((union foobar2 = foo2(string) + bar2(string)), []),
+    compileStatement((union foobar2 = foo2(string) + bar2(string)), [], test),
     assembly((case foo2("hello") of {
         &foo2('A'::(&string)) => 'A'::(&string) == 'A'::(&string);
         &bar2('_'::(&string)) => false
@@ -939,7 +948,7 @@ declareClassFunctions((ContextTuple => Decl), TypeContext, VNs) :-
 
 declareClassFunctions((Func -> Type), TypeContext, VNs) :-
     copy_term(((Func -> Type), TypeContext, VNs), (Decl, CtxCopy, VNsCopy)),
-    !compileStatement(declare Decl, VNsCopy, CtxCopy).
+    !compileStatement(declare Decl, VNsCopy, none, CtxCopy).
 
 declareClassFunctions((Decl; Decls), TypeContext, VNs) :-
     declareClassFunctions(Decl, TypeContext, VNs),
@@ -1295,7 +1304,7 @@ compileStructDeleteInstance(Type, Constructor) :-
     copy_term(Type, TypeCopy),
     compileStatement((instance TypeCopy : delete where {
         X del ConsWithUnderscores := X
-    }), ['X'=X]).
+    }), ['X'=X], none).
 
 fillWithUnderscores([]).
 fillWithUnderscores(['_'::_ | L]) :-
@@ -1309,7 +1318,7 @@ compileUnionDeleteInstance(Union, OptionList, VNs) :-
             Branches
         }
     }),
-    compileStatement(InstanceDef, ['x'=X, 'u'=U | VNs]).
+    compileStatement(InstanceDef, ['x'=X, 'u'=U | VNs], none).
 
 deleteUnionBranches([Op1, Op2 | Options], X, (Branch1; Branches)) :-
     deleteUnionBranches([Op1], X, Branch1),
@@ -1456,10 +1465,10 @@ lambdaMacro(X, Y, TypeModifier, ClassName, MethodName, Replacement) :-
         StructDef, InstanceDef, Replacement),
     !unnameVars(StructDef, StructDef1, StructDefVNs),
     replaceInTerm(StructDef1, removeTypes, StructDef2),
-    !compileStatement(StructDef2, StructDefVNs),
+    !compileStatement(StructDef2, StructDefVNs, none),
     !unnameVars(InstanceDef, InstanceDef1, InstanceDefVNs),
     replaceInTerm(InstanceDef1, removeTypes, InstanceDef2),
-    !compileStatement(InstanceDef2, InstanceDefVNs).
+    !compileStatement(InstanceDef2, InstanceDefVNs, none).
 
 removeTypes(Var::_, Var).
 
@@ -2043,11 +2052,11 @@ replaceArgsInRecur(AssignCommands, arg(N)::Type, Var::Type) :-
 :- begin_tests(backend).
 
 test(list_sum) :-
-    !compileStatement((declare list_sum(list(int64), int64) -> int64), []),
+    !compileStatement((declare list_sum(list(int64), int64) -> int64), [], none),
     !compileStatement((list_sum(L, Sum) := case L of {
         [] => Sum;
         [N | Ns] => list_sum(Ns, Sum + N)
-    }), ['L'=L, 'N'=N, 'Ns'=Ns, 'Sum'=Sum]),
+    }), ['L'=L, 'N'=N, 'Ns'=Ns, 'Sum'=Sum], none),
     !function_impl(list_sum, Guard1, Args, Asm, ret_val::int64),
     copy_term((Args, Guard1), (Params, Guard)),
     !assignArgs(Args, 0),
@@ -2065,11 +2074,11 @@ test(list_sum) :-
          recur([Ns1::list(int64),ResultPlusN1::int64], ret_val::int64)]])].
 
 test(increment_list) :-
-    !compileStatement((declare increment_list(list(int64)) -> list(int64)), []),
+    !compileStatement((declare increment_list(list(int64)) -> list(int64)), [], none),
     !compileStatement((increment_list(L) := case L of {
         [] => [];
         [N | Ns] => [N + 1 | increment_list(Ns)]
-    }), ['L'=L, 'N'=N, 'Ns'=Ns]),
+    }), ['L'=L, 'N'=N, 'Ns'=Ns], none),
     !function_impl(increment_list, Guard1, Args, Asm, ret_val::list(int64)),
     copy_term((Args, Guard1), (Params, Guard)),
     !assignArgs(Args, 0),
@@ -2091,10 +2100,10 @@ test(increment_list) :-
                     field(ret_val::list(int64),2)::list(int64))]])].
 
 test(fibonacci) :-
-    !compileStatement((declare fibonacci(int64, int64, int64) -> int64), []),
+    !compileStatement((declare fibonacci(int64, int64, int64) -> int64), [], none),
     !compileStatement((fibonacci(N, A, B) := if(N == 0,
         A,
-        fibonacci(N-1, B, A+B))), ['A'=A, 'B'=B, 'N'=N]),
+        fibonacci(N-1, B, A+B))), ['A'=A, 'B'=B, 'N'=N], none),
     !function_impl(fibonacci, Guard1, Args, Asm, ret_val::int64),
     copy_term((Args, Guard1), (Params, Guard)),
     !assignArgs(Args, 0),
@@ -2123,33 +2132,33 @@ assignArgs([arg(N)::_ | Args], N) :-
 
 % ============= Prelude =============
 :- compileStatement((class T : delete where { X del T -> X }),
-    ['T'=T, 'X'=X]).
-:- compileStatement((union bool = true + false), []).
-:- compileStatement((union list(T) = [] + [T | list(T)]), ['T'=T]).
-:- compileStatement((union maybe(T) = just(T) + none), ['T'=T]).
-:- compileStatement((struct (A, B) = (A, B)), ['A'=A, 'B'=B]).
-:- compileStatement((class T : plus where { T+T->T }), ['T'=T]).
+    ['T'=T, 'X'=X], none).
+:- compileStatement((union bool = true + false), [], none).
+:- compileStatement((union list(T) = [] + [T | list(T)]), ['T'=T], none).
+:- compileStatement((union maybe(T) = just(T) + none), ['T'=T], none).
+:- compileStatement((struct (A, B) = (A, B)), ['A'=A, 'B'=B], none).
+:- compileStatement((class T : plus where { T+T->T }), ['T'=T], none).
 :- compileStatement((instance int64 : plus where { A+B := int64_plus(A, B) }),
-    ['A'=A, 'B'=B]).
+    ['A'=A, 'B'=B], none).
 :- compileStatement((instance float64 : plus where { A+B := float64_plus(A, B) }),
-    ['A'=A, 'B'=B]).
+    ['A'=A, 'B'=B], none).
 :- compileStatement((instance string : plus where { A+B := strcat(A, B) }),
-    ['A'=A, 'B'=B]).
-:- compileStatement((class T : minus where { T-T->T }), ['T'=T]).
+    ['A'=A, 'B'=B], none).
+:- compileStatement((class T : minus where { T-T->T }), ['T'=T], none).
 :- compileStatement((instance int64 : minus where { A-B := int64_minus(A, B) }),
-    ['A'=A, 'B'=B]).
+    ['A'=A, 'B'=B], none).
 :- compileStatement((instance float64 : minus where { A-B := float64_minus(A, B) }),
-    ['A'=A, 'B'=B]).
+    ['A'=A, 'B'=B], none).
 :- compileStatement((instance int64 : delete where { X del N := X }),
-    ['X'=X, 'N'=N]).
+    ['X'=X, 'N'=N], none).
 :- compileStatement((instance float64 : delete where { X del N := X }),
-    ['X'=X, 'N'=N]).
+    ['X'=X, 'N'=N], none).
 :- compileStatement((instance string : delete where 
-    { X del S := delete_string(S, X) }), ['X'=X, 'S'=S]).
+    { X del S := delete_string(S, X) }), ['X'=X, 'S'=S], none).
 :- compileStatement((class F:(T1->T2) where { F!T1 -> T2 }),
-    ['T1'=T1, 'T2'=T2, 'F'=F]).
+    ['T1'=T1, 'T2'=T2, 'F'=F], none).
 :- compileStatement((class F:(T1@>T2) where { &F@T1 -> T2 }),
-    ['T1'=T1, 'T2'=T2, 'F'=F]).
+    ['T1'=T1, 'T2'=T2, 'F'=F], none).
 :- compileStatement((F : (T1 -> T2) => declare let(T1, F) -> T2),
-    ['T1'=T1, 'T2'=T2, 'F'=F]).
-:- compileStatement((let(V, Fn) := Fn!V), ['V'=V, 'Fn'=Fn]).
+    ['T1'=T1, 'T2'=T2, 'F'=F], none).
+:- compileStatement((let(V, Fn) := Fn!V), ['V'=V, 'Fn'=Fn], none).
