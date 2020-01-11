@@ -2049,8 +2049,7 @@ findArgsInRecur(arg(N)::Type, AssignCommands,
 
 replaceArgsInRecur(AssignCommands, arg(N)::Type, Var::Type) :-
     nonvar(N),
-    member(assign(arg(N)::Type, Var::Type), AssignCommands).
-    
+    member(assign(arg(N)::Type, Var::Type), AssignCommands).    
 
 :- begin_tests(backend).
 
@@ -2067,14 +2066,15 @@ test(list_sum) :-
     !reuseSpace(UAsm1, UAsm2),
     !reuseData(UAsm2, UAsm3),
     !tre(UAsm3, list_sum, Params, Guard, UAsm),
-    UAsm =@= [case(arg(0)::list(int64),[
-        [assign(arg(1)::int64, ret_val::int64),
-         return],
-        [read_field(arg(0)::list(int64),1,N1::int64),
-         read_field(arg(0)::list(int64),2,Ns1::list(int64)),
-         deallocate(arg(0)::list(int64),3),
-         call(+,[arg(1)::int64,N1::int64],[int64:plus],ResultPlusN1::int64),
-         recur([Ns1::list(int64),ResultPlusN1::int64], ret_val::int64)]])].
+    walk(UAsm, declareLocalVars, [], _),
+    UAsm == [case(arg(0)::list(int64),[
+                [assign(arg(1)::int64, ret_val::int64),
+                return],
+                [read_field(arg(0)::list(int64),1,var(0)::int64),
+                read_field(arg(0)::list(int64),2,var(1)::list(int64)),
+                deallocate(arg(0)::list(int64),3),
+                call(+,[arg(1)::int64,var(0)::int64],[int64:plus],var(2)::int64),
+                recur([var(1)::list(int64),var(2)::int64], ret_val::int64)]])].
 
 test(increment_list) :-
     !compileStatement((declare increment_list(list(int64)) -> list(int64)), [], none),
@@ -2089,17 +2089,18 @@ test(increment_list) :-
     !reuseSpace(UAsm1, UAsm2),
     !reuseData(UAsm2, UAsm3),
     !tre(UAsm3, increment_list, Params, Guard, UAsm),
-    UAsm =@= [case(arg(0)::list(int64),[
+    walk(UAsm, declareLocalVars, [], _),
+    UAsm == [case(arg(0)::list(int64),[
                 [assign_sentinel(0,ret_val::list(int64)),
                  return],
-                [read_field(arg(0)::list(int64),1,N1::int64),
-                 read_field(arg(0)::list(int64),2,Ns1::list(int64)),
+                [read_field(arg(0)::list(int64),1,var(0)::int64),
+                 read_field(arg(0)::list(int64),2,var(1)::list(int64)),
                  assign(arg(0)::list(int64),ret_val::list(int64)),
                  literal(1,field(ret_val::list(int64),0)::int64),
-                 literal(1,_9166::int64),
-                 call(+,[N1::int64,_9166::int64],[int64:plus],
+                 literal(1,var(2)::int64),
+                 call(+,[var(0)::int64,var(2)::int64],[int64:plus],
                     field(ret_val::list(int64),1)::int64),
-                 recur([Ns1::list(int64)],
+                 recur([var(1)::list(int64)],
                     field(ret_val::list(int64),2)::list(int64))]])].
 
 test(fibonacci) :-
@@ -2114,16 +2115,17 @@ test(fibonacci) :-
     !reuseSpace(UAsm1, UAsm2),
     !reuseData(UAsm2, UAsm3),
     tre(UAsm3, fibonacci, Params, Guard, UAsm),
-    UAsm =@= [literal(0,Zero::int64),
-              call(==,[arg(0)::int64,Zero::int64],[],IsZero::bool),
-              case(IsZero::bool,[
+    walk(UAsm, declareLocalVars, [], _),
+    UAsm == [literal(0,var(0)::int64),
+              call(==,[arg(0)::int64,var(0)::int64],[],var(1)::bool),
+              case(var(1)::bool,[
                 [assign(arg(1)::int64,ret_val::int64),
                  return],
-                [literal(1,One::int64),
-                 call(-,[arg(0)::int64,One::int64],[int64:minus],NMinusOne::int64),
-                 call(+,[arg(1)::int64,arg(2)::int64],[int64:plus],APlusB::int64),
-                 assign(arg(2)::int64, Arg2::int64),
-                 recur([NMinusOne::int64,Arg2::int64,APlusB::int64],
+                [literal(1,var(2)::int64),
+                 call(-,[arg(0)::int64,var(2)::int64],[int64:minus],var(3)::int64),
+                 call(+,[arg(1)::int64,arg(2)::int64],[int64:plus],var(4)::int64),
+                 assign(arg(2)::int64, var(5)::int64),
+                 recur([var(3)::int64,var(5)::int64,var(4)::int64],
                     ret_val::int64)]])].
 
 :- end_tests(backend).
@@ -2132,6 +2134,11 @@ assignArgs([], _).
 assignArgs([arg(N)::_ | Args], N) :-
     N1 is N + 1,
     assignArgs(Args, N1).
+
+declareLocalVars(Var::Type, Decls, [decl(Var, Type) | Decls]) :-
+    var(Var),
+    length(Decls, N),
+    Var = var(N).
 
 my_assert(Foo) :- assert(Foo).
 
@@ -2281,6 +2288,11 @@ test(case) :-
                        "",
                        "}"]), Code).
 
+% A variable declaration.
+test(decl) :-
+    termToC(decl(var(2), maybe(bool)), Code),
+    Code == "pointer v2;".
+
 :- end_tests(termToC).
 
 termToC(Term, String) :-
@@ -2348,6 +2360,7 @@ termToCTerm(cases([Branch | Branches], N),
                     [tab, "break;"]]),
         cases(Branches, N1)]) :-
     N1 is N + 1.
+termToCTerm(decl(Var, Type), [Type, " ", Var::Type, ";"]).
 
 escape(S, Escaped) :-
     string_chars(S, Chars),
