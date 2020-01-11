@@ -1835,6 +1835,7 @@ test(remove_allocation) :-
                 literal(3, _::int64),
                 allocate(3, Bar::bartype),
                 literal("hello", field(Bar::bartype, 2)::string)], UAsm),
+    writeln(UAsm),
     UAsm =@= [allocate(3, Common:footype),
               call(bar, [Common::footype], Common::bartype),
               literal(3, _::int64),
@@ -1861,24 +1862,28 @@ test(case) :-
                 literal(4, _::int64)].
 :- end_tests(reuseSpace).
 
-reuseSpace([], []).
-reuseSpace([Cmd | UAsmIn], UAsmOut) :-
-    Cmd = deallocate(Alloc, Size) ->
-        once(reuseSpace(UAsmIn, Alloc, Size, UAsmOut))
-        ;
-        Cmd = case(Expr, Branches) ->
-            reuseSpaceInBranches(Branches, OptBranches),
-            UAsmOut = [case(Expr, OptBranches) | UAsmMid],
-            reuseSpace(UAsmIn, UAsmMid)
-            ;
-            UAsmOut = [Cmd | UAsmMid],
-            reuseSpace(UAsmIn, UAsmMid).
+reuseSpace(UAsmIn, UAsmOut) :-
+    once(reuseSpaceNondet(UAsmIn, UAsmOut)).
 
-reuseSpace([], Alloc, Size, [deallocate(Alloc, Size)]).
-reuseSpace([allocate(Size, Var::_) | UAsmIn], Var::_, Size, UAsmOut) :-
-    reuseSpace(UAsmIn, UAsmOut).
-reuseSpace([Cmd | UAsmIn], Alloc, Size, [Cmd | UAsmOut]) :-
-    reuseSpace(UAsmIn, Alloc, Size, UAsmOut).
+reuseSpaceNondet([], []).
+reuseSpaceNondet([deallocate(Alloc, Size) | UAsmIn], UAsmOut) :-
+    reuseSpaceNondet(UAsmIn, Alloc, Size, UAsmOut).
+reuseSpaceNondet([Cmd | UAsmIn], UAsmOut) :-
+    Cmd = case(Expr, Branches) ->
+        reuseSpaceInBranches(Branches, OptBranches),
+        UAsmOut = [case(Expr, OptBranches) | UAsmMid],
+        reuseSpaceNondet(UAsmIn, UAsmMid)
+        ;
+        UAsmOut = [Cmd | UAsmMid],
+        reuseSpaceNondet(UAsmIn, UAsmMid).
+
+reuseSpaceNondet([allocate(Size, Var2::Type2) | UAsmIn], Var1::Type1, Size, UAsmOut) :-
+    Var1 = Var2 ->    
+        reuseSpaceNondet(UAsmIn, UAsmOut)
+        ;
+        reuseSpaceNondet([assign(Var1::Type1, Var2::Type2) | UAsmIn], UAsmOut).
+reuseSpaceNondet([Cmd | UAsmIn], Alloc, Size, [Cmd | UAsmOut]) :-
+    reuseSpaceNondet(UAsmIn, Alloc, Size, UAsmOut).
 
 reuseSpaceInBranches([], []).
 reuseSpaceInBranches([Branch | Branches], [OptBranch | OptBranches]) :-
@@ -1937,25 +1942,39 @@ reuseDataInBranches([Branch | Branches], [OptBranch | OptBranches]) :-
     reuseData(Branch, OptBranch),
     reuseDataInBranches(Branches, OptBranches).
 
+:- begin_tests(tre).
+
+% Tail-Recursion Elimination (TRE) is a must-have optimization in functional programming
+% languages. Functional programming languages rely on recursion for iteration, and
+% without this optimization, the number of iterations a function may perform is limited
+% by the depth of the stack.
+
+% TRE replaces tail recursion (a recursive call that happens as the last thing a
+% function does) with a loop-back to the beginning of the function, while updating
+% the argument values.
+
+:- end_tests(tre).
+
 :- begin_tests(backend).
 
 test(list_sum) :-
-    !compileStatement((declare list_sum(list(int64)) -> int64), []),
-    !compileStatement((list_sum(L) := case L of {
-        [] => 0;
-        [N | Ns] => N + list_sum(Ns)
-    }), ['L'=L, 'N'=N, 'Ns'=Ns]),
-    !function_impl(list_sum, [], [L1::list(int64)], Asm, _::int64),
+    !compileStatement((declare list_sum(list(int64), int64) -> int64), []),
+    !compileStatement((list_sum(L, Sum) := case L of {
+        [] => Sum;
+        [N | Ns] => list_sum(Ns, Sum + N)
+    }), ['L'=L, 'N'=N, 'Ns'=Ns, 'Sum'=Sum]),
+    !function_impl(list_sum, [], Args, Asm, ret_val::int64),
+    !assignArgs(Args, 0),
     !microAsm(Asm, UAsm1),
     !reuseSpace(UAsm1, UAsm2),
     !reuseData(UAsm2, UAsm),
-    UAsm =@= [case(L1::list(int64),[
-                [literal(0,Res::int64)],
-                [read_field(L1::list(int64),1,N1::int64),
-                read_field(L1::list(int64),2,Ns1::list(int64)),
-                call(list_sum,[Ns1::list(int64)],[],SumOfNs::int64),
-                call(+,[N1::int64,SumOfNs::int64],[int64:plus],Res::int64),
-                deallocate(L1::list(int64),3)]])].
+    UAsm =@= [case(arg(0)::list(int64),[
+        [assign(arg(1)::int64, ret_val::int64)],
+        [read_field(arg(0)::list(int64),1,N1::int64),
+         read_field(arg(0)::list(int64),2,Ns1::list(int64)),
+         deallocate(arg(0)::list(int64),3),
+         call(+,[arg(1)::int64,N1::int64],[int64:plus],ResultPlusN1::int64),
+         call(list_sum,[Ns1::list(int64),ResultPlusN1::int64],[],ret_val::int64)]])].
 
 test(increment_list) :-
     !compileStatement((declare increment_list(list(int64)) -> list(int64)), []),
@@ -1963,23 +1982,29 @@ test(increment_list) :-
         [] => [];
         [N | Ns] => [N + 1 | increment_list(Ns)]
     }), ['L'=L, 'N'=N, 'Ns'=Ns]),
-    !function_impl(increment_list, [], [L1::list(int64)], Asm, _::list(int64)),
+    !function_impl(increment_list, [], Args, Asm, ret_val::list(int64)),
+    !assignArgs(Args, 0),
     !microAsm(Asm, UAsm1),
     !reuseSpace(UAsm1, UAsm2),
     !reuseData(UAsm2, UAsm),
-    writeln(UAsm),
-    UAsm =@= [case(L1::list(int64),[
-                [assign_sentinel(0,L1::list(int64))],
-                [read_field(L1::list(int64),1,N1::int64),
-                 read_field(L1::list(int64),2,Ns1::list(int64)),
-                 literal(1,field(L1::list(int64),0)::int64),
-                 literal(1,One::int64),
-                 call(+,[N1::int64,One::int64],[int64:plus],
-                    field(L1::list(int64),1)::int64),
+    UAsm =@= [[case(arg(0)::list(int64),[
+                [assign_sentinel(0,ret_val::list(int64))],
+                [read_field(arg(0)::list(int64),1,N1::int64),
+                 read_field(arg(0)::list(int64),2,Ns1::list(int64)),
+                 assign(arg(0)::list(int64),ret_val::list(int64)),
+                 literal(1,field(ret_val::list(int64),0)::int64),
+                 literal(1,_9166::int64),
+                 call(+,[N1::int64,_9166::int64],[int64:plus],
+                 field(ret_val::list(int64),1)::int64),
                  call(increment_list,[Ns1::list(int64)],[],
-                    field(L1::list(int64),2)::list(int64))]])].
+                    field(ret_val::list(int64),2)::list(int64))]])].
 
 :- end_tests(backend).
+
+assignArgs([], _).
+assignArgs([arg(N)::_ | Args], N) :-
+    N1 is N + 1,
+    assignArgs(Args, N1).
 
 % ============= Prelude =============
 :- compileStatement((class T : delete where { X del T -> X }),
