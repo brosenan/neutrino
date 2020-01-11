@@ -21,6 +21,7 @@
 :- dynamic type_signature/4.
 :- dynamic type/1.
 :- dynamic union_type/2.
+:- dynamic struct_type/1.
 :- dynamic is_constructor/2.
 :- dynamic type_class/4.
 :- dynamic class_instance/3.
@@ -29,6 +30,7 @@
 :- dynamic is_option/2.
 :- dynamic function_impl/5.
 :- dynamic unit_test/3.
+:- dynamic generated_name/4.
 
 :- discontiguous constant_propagation/2.
 :- discontiguous type_signature/4.
@@ -111,6 +113,7 @@ compileStatement((struct Type = Constructor), VNs, _Location) :-
     Constructor =.. [ConsName | ConsArgs],
     assert(type_signature(ConsName, ConsArgs, Type, [])),
     length(ConsArgs, ConsArity),
+    assert(struct_type(Type)),
     assert(is_struct(ConsName/ConsArity)),
     assert(is_constructor(ConsName, ConsArity)),
     Type =.. [Name | Args],
@@ -2129,6 +2132,244 @@ assignArgs([], _).
 assignArgs([arg(N)::_ | Args], N) :-
     N1 is N + 1,
     assignArgs(Args, N1).
+
+my_assert(Foo) :- assert(Foo).
+
+:- begin_tests(termToC).
+
+% termToC converts a term representing a C code fragment to a string containing that
+% code fragment.
+
+% Strings are taken verbatim.
+test(strings) :-
+    termToC("hello", Hello),
+    Hello == "hello".
+
+% Lists are taken as concatenation.
+test(lists) :-
+    termToC(["hello", "world"], HelloWorld),
+    HelloWorld == "helloworld".
+
+% Numbers are converted to decimals.
+test(numbers) :-
+    termToC([42, ", ", 3.14], Numbers),
+    Numbers == "42, 3.14".
+
+% A tab represents two spaces.
+test(tab) :-
+    termToC(tab, Tab),
+    Tab == "  ".
+
+% The lines construct takes a prefix and a list. It evaluates to the contents of the list
+% as individual lines, each starting with the prefix.
+test(lines) :-
+    termToC(lines(tab, ["foo", "bar", "baz"]), Lines),
+    Lines == "  foo\n  bar\n  baz\n".
+
+% The delimited construct takes a delimiter and a list of elements. It places the
+% delimiter between each two elements.
+test(delimited0) :-
+    termToC(delimited(", ", []), Code),
+    Code == "".
+test(delimited1) :-
+    termToC(delimited(", ", [1]), Code),
+    Code == "1".
+test(delimited3) :-
+    termToC(delimited(", ", [1, 2, 3]), Code),
+    Code == "1, 2, 3".
+
+% If one lines construct is nested within another, all lines get the sum of both
+% prefixes.
+test(nested_lines) :-
+    termToC(lines(tab, ["foo", lines(tab, ["bar", "baz"])]), Lines),
+    Lines == "  foo\n    bar\n    baz\n".
+
+% Built-in Neutrino types are converted to corresponding C(++) types.
+test(built_in_types) :-
+    termToC([int64, ", ",
+             float64, ", ",
+             string], Types),
+    Types == "int64_t, double, std::string*".
+
+% Other types (union, struct) are represented as "pointer"
+test(union_and_struct_types) :-
+    termToC([bool, ", ",
+             maybe(int64), ", ",
+             (int64, float64)], Types),
+    Types == "pointer, pointer, pointer".
+
+% Local variables are designated vN, where N is a number. Arguments are designated aN,
+% and the return value is represented as *ret_val.
+test(variables) :-
+    termToC([var(2)::bool, ", ",
+             arg(3)::int64, ", ",
+             ret_val::string], Vars),
+    Vars == "v2, a3, *ret_val".
+
+% Accessing a field is done by performing pointer arithmetic to get the field's address,
+% then casting the pointer to the correct type and finally dereferencing to get the
+% value.
+test(field):-
+    termToC(field(var(2)::just(int64), 1)::int64, Code),
+    Code = "*(int64_t*)(v2 + 1)".
+
+% A numeric literal simply assigns the value to the target.
+test(numeric_literal) :-
+    termToC(lines("", [literal(4, var(2)::int64),
+                        literal(3.14, ret_val::float64)]), Code),
+    Code == "v2 = 4;\n*ret_val = 3.14;\n".
+
+% A string literal is quoted, escaped, and placed in the constructor of std::string.
+test(string_literal) :-
+    termToC(literal("hello\n\"world\"", var(2)::string), Code),
+    Code == "v2 = new std::string(\"hello\\n\\\"world\\\"\");".
+
+% The assign command maps to an assignment statement.
+test(assign) :-
+    termToC(assign(var(2)::int64, arg(1)::int64), Code),
+    Code == "a1 = v2;".
+
+% Allocating and deallocating objects.
+test(allocate) :-
+    termToC(lines(tab, [allocate(2, var(2)::just(int64)),
+                       deallocate(var(2)::just(int64), 2)]), Code),
+    Code == "  v2 = allocate(2);\n  deallocate(v2, 2);\n".
+
+% Sentinel
+test(assign_sentinel) :-
+    termToC(assign_sentinel(1, var(2)::bool), Code),
+    Code == "v2 = _sentinel + 1;".
+
+% Reading an object field
+test(read_field) :-
+    termToC(read_field(var(2)::just(int64), 1, ret_val::int64), Code),
+    Code == "*ret_val = ((int64_t*)v2)[1];".
+
+% Return
+test(return) :-
+    termToC(return, Code),
+    Code == "return;".
+
+% Calling a Neutrino function is done by calling a corresponding C++ function. It uses
+% call by reference, where the last argument is the address for the return value.
+% The name of the function to call is determined by the generated_name predicate, which
+% stores the mapping between the original name, argument types and guard to a C++ name.
+
+test(call) :-
+    my_assert(generated_name(foo, [_::float64, _::string], [int64:plus], "foo15")),
+    my_assert(generated_name(foo, [_::int64, _::string], [string:plus], "foo17")),
+    my_assert(generated_name(foo, [_::int64, _::string], [int64:plus], "foo13")),
+    termToC(call(foo, [var(3)::int64, arg(2)::string], [int64:plus], ret_val::bool),
+        Code),
+    Code == "foo13(v3, a2, &*ret_val);".
+
+% A case command maps into a switch statement. We dereference the object on which the
+% case expression matches to get the option number. The cases are on the numbers 0 and
+% up.
+test(case) :-
+    termToC(case(var(3)::bool, [
+        [literal("yes", ret_val::string)],
+        [literal("no", ret_val::string)]
+    ]), Code),
+    termToC(lines("", ["switch(*(int64_t*)v3) {",
+                       "  case 0:",
+                       "    *ret_val = new std::string(\"yes\");",
+                       "    break;",
+                       "  case 1:",
+                       "    *ret_val = new std::string(\"no\");",
+                       "    break;",
+                       "",
+                       "}"]), Code).
+
+:- end_tests(termToC).
+
+termToC(Term, String) :-
+    string(Term) ->
+        String = Term
+        ;
+        number(Term) ->
+            atom_number(Atom, Term),
+            atom_string(Atom, String)
+            ;
+            Term = [] ->
+                String = ""
+                ;
+                Term = [First | Rest] ->
+                    termToC(First, FStr),
+                    termToC(Rest, RStr),
+                    string_concat(FStr, RStr, String)
+                    ;
+                    !termToCTerm(Term, CTerm),
+                    termToC(CTerm, String).
+
+termToCTerm(tab, "  ").
+termToCTerm(lines(_, []), "").
+termToCTerm(lines(Prefix, [Line | Lines]), Output) :-
+    Line = lines(Prefix2, Lines2) ->
+        Output = [lines([Prefix, Prefix2], Lines2), lines(Prefix, Lines)]
+        ;
+        Output = [Prefix, Line, "\n" | lines(Prefix, Lines)].
+termToCTerm(delimited(_, []), []).
+termToCTerm(delimited(_, [Item]), [Item]).
+termToCTerm(delimited(Delim, [Item0, Item1 | Items]), 
+    [Item0, Delim, delimited(Delim, [Item1 | Items])]).
+termToCTerm(int64, "int64_t").
+termToCTerm(float64, "double").
+termToCTerm(string, "std::string*").
+termToCTerm(Type, "pointer") :-
+    (union_type(Type, _); struct_type(Type)).
+termToCTerm(var(N)::_, ["v", N]).
+termToCTerm(arg(N)::_, ["a", N]).
+termToCTerm(ret_val::_, "*ret_val").
+termToCTerm(field(Obj, N)::Type, ["*(", Type, "*)(", Obj, " + ", N, ")"]).
+termToCTerm(literal(N, Var), [Var, " = ", N, ";"]) :-
+    number(N).
+termToCTerm(literal(S, Var), [Var, " = new std::string(\"", Escaped, "\");"]) :-
+    string(S),
+    escape(S, Escaped).
+termToCTerm(assign(Src, Dest), [Dest, " = ", Src, ";"]).
+termToCTerm(allocate(Size, Dest), [Dest, " = allocate(", Size, ");"]).
+termToCTerm(deallocate(Obj, Size), ["deallocate(", Obj, ", ", Size, ");"]).
+termToCTerm(assign_sentinel(N, Dest), [Dest, " = _sentinel + ", N, ";"]).
+termToCTerm(read_field(Obj, N, Dest::Type),
+    [Dest::Type, " = ((", Type, "*)", Obj, ")[", N, "];"]).
+termToCTerm(return, "return;").
+termToCTerm(call(Name, Args, Guard, Ret),
+        [CName, "(", delimited(", ", ArgsWithRet), ");"]) :-
+    !getCName(Name, Args, Guard, CName),
+    append(Args, [["&", Ret]], ArgsWithRet).
+termToCTerm(case(Expr, Branches), lines("", [["switch(*(int64_t*)", Expr, ") {"],
+                                                cases(Branches, 0),
+                                             "}"])).
+termToCTerm(cases([], _), []).
+termToCTerm(cases([Branch | Branches], N),
+        [lines(tab, [["case ", N, ":"],
+                    lines(tab, Branch),
+                    [tab, "break;"]]),
+        cases(Branches, N1)]) :-
+    N1 is N + 1.
+
+escape(S, Escaped) :-
+    string_chars(S, Chars),
+    escapeChars(Chars, EscChars),
+    string_chars(Escaped, EscChars).
+
+escapeChars([], []).
+escapeChars([Char | Chars], ['\\', EscChar | EscChars]) :-
+    escapeChar(Char, EscChar),
+    escapeChars(Chars, EscChars).
+escapeChars([Char | Chars], [Char | EscChars]) :-
+    \+escapeChar(Char, _),
+    escapeChars(Chars, EscChars).
+
+escapeChar('\n', n).
+escapeChar('\r', r).
+escapeChar('\t', t).
+escapeChar('\"', '\"').
+escapeChar('\'', '\'').
+
+getCName(Name, Args, Guard, CName) :-
+    generated_name(Name, Args, Guard, CName).
 
 % ============= Prelude =============
 :- compileStatement((class T : delete where { X del T -> X }),
