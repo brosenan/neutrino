@@ -2384,6 +2384,43 @@ escapeChar('\'', '\'').
 getCName(Name, Args, Guard, CName) :-
     generated_name(Name, Args, Guard, CName).
 
+:- begin_tests(generateFunction).
+
+test(inc) :-
+    compileStatement((inc(N) := N+1), ['N'=N], test),
+    my_assert(generated_name(inc, [_::int64], [], "inc7")),
+    my_assert(generated_name(int64_plus, [_::int64, _::int64], [], "int64_plus")),
+    generateFunction(inc, [var(3)::int64], [], Actual),
+    termToC(lines("",
+        [
+            "void inc7(int64_t a0, int64_t* ret_val) {",
+            "  int64_t v0;",
+            "  v0 = 1;",
+            "  int64_plus(a0, v0, &*ret_val);",
+            "}"
+        ]), Expected),
+    writeln(Actual),
+    Expected == Actual.
+
+:- end_tests(generateFunction).
+
+generateFunction(Name, Args, Guard, Code) :-
+    sameLength(Args, Params),
+    function_impl(Name, Guard, Params, Asm1, ret_val::RetType),
+    specialize(Asm1, Asm2),
+    writeln(1=[Asm2, Params]),
+    normalizeAssembly(Asm2, Asm),
+    writeln(2=[Asm, Params]),
+    generated_name(Name, Params, Guard, CName),
+    assignArgs(Params, 0),
+    microAsm(Asm, UAsm),
+    append(Params, [ret_val::RetType], CArgs),
+    termToC(lines("", [
+        ["void ", CName, "(", CArgs, ") {"],
+        lines(tab, UAsm),
+        "}"
+    ]), Code).
+
 % ============= Prelude =============
 :- compileStatement((class T : delete where { X del T -> X }),
     ['T'=T, 'X'=X], none).
