@@ -1628,7 +1628,12 @@ normalizeAssembly([Cmd | AsmIn], AsmOut) :-
     !normalizeAssembly(AsmIn, AsmMid).
 
 splitTypes([], [], []).
-splitTypes([Arg::Type | Args], [Arg | ArgsNoTypes], [Type | ArgTypes]) :-
+splitTypes([Arg | Args], [ArgNoType | ArgsNoTypes], [Type | ArgTypes]) :-
+    (nonvar(Arg), Arg = Arg1::Type, var(Arg1) ->
+        ArgNoType = Arg
+        ;
+        Arg = Arg1::Type,
+        ArgNoType = Arg1),
     splitTypes(Args, ArgsNoTypes, ArgTypes).
 
 normalizeBranches([], []).
@@ -2361,6 +2366,7 @@ termToCTerm(cases([Branch | Branches], N),
         cases(Branches, N1)]) :-
     N1 is N + 1.
 termToCTerm(decl(Var, Type), [Type, " ", Var::Type, ";"]).
+termToCTerm(def(Var::Type), [Type, " ", Var::Type]).
 
 escape(S, Escaped) :-
     string_chars(S, Chars),
@@ -2393,33 +2399,53 @@ test(inc) :-
     generateFunction(inc, [var(3)::int64], [], Actual),
     termToC(lines("",
         [
-            "void inc7(int64_t a0, int64_t* ret_val) {",
+            "void inc7(int64_t a0, int64_t *ret_val) {",
             "  int64_t v0;",
             "  v0 = 1;",
             "  int64_plus(a0, v0, &*ret_val);",
             "}"
         ]), Expected),
-    writeln(Actual),
     Expected == Actual.
+
+% test(replace_second) :-
+%     !compileStatement((declare replace_second((int64, int64), int64) -> (int64, int64)), [], test),
+%     !compileStatement((replace_second((A, B), N) := (A, N)), ['A'=A, 'B'=B, 'N'=N], test),
+%     my_assert(generated_name(replace_second, [_::(int64, int64), _::int64], [], "replace_second2")),
+%     !generateFunction(replace_second, [var(1)::(int64, int64), var(3)::int64], [], Actual),
+%     termToC(lines("",
+%         [
+%             "void replace_second2(pointer a0, int64 a1, pointer *ret_val) {",
+%             "  int64_t v0;",
+%             "  v0 = 1;",
+%             "  int64_plus(a0, v0, &*ret_val);",
+%             "}"
+%         ]), Expected),
+%     writeln(Actual),
+%     Expected == Actual.
 
 :- end_tests(generateFunction).
 
-generateFunction(Name, Args, Guard, Code) :-
-    sameLength(Args, Params),
-    function_impl(Name, Guard, Params, Asm1, ret_val::RetType),
-    specialize(Asm1, Asm2),
-    writeln(1=[Asm2, Params]),
-    normalizeAssembly(Asm2, Asm),
-    writeln(2=[Asm, Params]),
-    generated_name(Name, Params, Guard, CName),
-    assignArgs(Params, 0),
-    microAsm(Asm, UAsm),
-    append(Params, [ret_val::RetType], CArgs),
-    termToC(lines("", [
-        ["void ", CName, "(", CArgs, ") {"],
+generateFunction(Name, Params, Guard, Code) :-
+    !sameLength(Params, Args),
+    !function_impl(Name, Guard, Args, Asm1, ret_val::RetType),
+    !specialize(Asm1, Asm2),
+    !normalizeAssembly(Asm2, Asm),
+    !generated_name(Name, Args, Guard, CName),
+    !assignArgs(Args, 0),
+    !microAsm(Asm, UAsm),
+    !append(Args, [ret_val::RetType], AllArgs),
+    !makeArgDefs(AllArgs, ArgDefs),
+    walk(UAsm, declareLocalVars, [], VarDecls),
+    !termToC(lines("", [
+        ["void ", CName, "(", delimited(", ", ArgDefs), ") {"],
+        lines(tab, VarDecls),
         lines(tab, UAsm),
         "}"
     ]), Code).
+
+makeArgDefs([], []).
+makeArgDefs([Arg | Args], [def(Arg) | ArgDefs]) :-
+    makeArgDefs(Args, ArgDefs).
 
 % ============= Prelude =============
 :- compileStatement((class T : delete where { X del T -> X }),
