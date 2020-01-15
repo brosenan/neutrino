@@ -1725,7 +1725,7 @@ test(case) :-
 microAsm([], []).
 microAsm([Cmd | Asm], UAsm) :-
     (Cmd = construct(Name, Args, Val) ->
-        once(constructMicroAsm(Name, Args, Val, ConsUAsm)),
+        !once(constructMicroAsm(Name, Args, Val, ConsUAsm)),
         append(ConsUAsm, RestUAsm, UAsm)
         ;
         Cmd = destruct(Val, Name, Args) ->
@@ -1744,20 +1744,20 @@ microAsm([Cmd | Asm], UAsm) :-
                         UAsm = RestUAsm
                         ;
                         UAsm = [Cmd | RestUAsm]),
-    microAsm(Asm, RestUAsm).
+    !microAsm(Asm, RestUAsm).
 
-constructMicroAsm(Name, Args, Struct, [allocate(Arity, Struct)]) :-
+constructMicroAsm(Name, Args, Struct, [allocate(Arity, Struct) | AssignFields]) :-
     length(Args, Arity),
     is_struct(Name/Arity),
-    assignFields(Args, Struct, 0).
+    !assignFields(Args, Struct, 0, [], AssignFields).
 
 constructMicroAsm(Name, Args, Struct, [allocate(ArityPlusOne, Struct),
-                                       literal(N, field(Struct, 0)::int64)]) :-
+                                       literal(N, field(Struct, 0)::int64) | AssignFields]) :-
     length(Args, Arity),
     is_option(Name/Arity, N),
     Arity > 0,
     ArityPlusOne is Arity + 1,
-    assignFields(Args, Struct, 1).
+    assignFields(Args, Struct, 1, [], AssignFields).
 
 constructMicroAsm(Name, [], Struct, [assign_sentinel(N, Struct)]) :-
     is_option(Name/0, N).
@@ -1789,10 +1789,14 @@ destructRefMicroAsm(Val, Name, Args, DestUAsm) :-
     is_option(Name/Arity, _),
     readFieldsMicroAsm(Args, Val, 1, DestUAsm).
 
-assignFields([], _, _).
-assignFields([field(Struct, N)::_ | Args], Struct, N) :-
+assignFields([], _, _, AssignFields, AssignFields).
+assignFields([Arg::Type | Args], Struct, N, AssignFieldsIn, AssignFieldsOut) :-
+    (Arg = field(Struct, N) ->
+        AssignFieldsMid = AssignFieldsIn
+        ;
+        AssignFieldsMid = [assign(field(Struct, N)::Type, Arg::Type) | AssignFieldsIn]),
     N1 is N + 1,
-    assignFields(Args, Struct, N1).
+    assignFields(Args, Struct, N1, AssignFieldsMid, AssignFieldsOut).
 
 readFieldsMicroAsm([], _, _, []).
 readFieldsMicroAsm([Arg | Args], Val, N, [read_field(Val, N, Arg) | DestUAsm]) :-
@@ -2384,21 +2388,21 @@ test(inc) :-
         ]), Expected),
     Expected == Actual.
 
-% test(replace_second) :-
-%     !compileStatement((declare replace_second((int64, int64), int64) -> (int64, int64)), [], test),
-%     !compileStatement((replace_second((A, B), N) := (A, N)), ['A'=A, 'B'=B, 'N'=N], test),
-%     my_assert(generated_name(replace_second, [_::(int64, int64), _::int64], [], "replace_second2")),
-%     !generateFunction(replace_second, [var(1)::(int64, int64), var(3)::int64], [], Actual),
-%     termToC(lines("",
-%         [
-%             "void replace_second2(pointer a0, int64 a1, pointer *ret_val) {",
-%             "  int64_t v0;",
-%             "  v0 = 1;",
-%             "  int64_plus(a0, v0, &*ret_val);",
-%             "}"
-%         ]), Expected),
-%     writeln(Actual),
-%     Expected == Actual.
+test(replace_second) :-
+    !compileStatement((declare replace_second((int64, int64), int64) -> (int64, int64)), [], test),
+    !compileStatement((replace_second((A, B), N) := (A, N)), ['A'=A, 'B'=B, 'N'=N], test),
+    my_assert(generated_name(replace_second, [_::(int64, int64), _::int64], [], "replace_second2")),
+    !generateFunction(replace_second, [var(1)::(int64, int64), var(3)::int64], [], Actual),
+    termToC(lines("",
+        [
+            "void replace_second2(pointer a0, int64 a1, pointer *ret_val) {",
+            "  int64_t v0;",
+            "  v0 = 1;",
+            "  int64_plus(a0, v0, &*ret_val);",
+            "}"
+        ]), Expected),
+    writeln(Actual),
+    Expected == Actual.
 
 :- end_tests(generateFunction).
 
@@ -2409,7 +2413,9 @@ generateFunction(Name, Params, Guard, Code) :-
     !normalizeAssembly(Asm2, Asm),
     !generated_name(Name, Args, Guard, CName),
     !assignArgs(Args, 0),
+    writeln(asm=Asm),
     !microAsm(Asm, UAsm),
+    writeln(uasm=UAsm),
     !append(Args, [ret_val::RetType], AllArgs),
     !makeArgDefs(AllArgs, ArgDefs),
     walk(UAsm, declareLocalVars, [], VarDecls),
@@ -2423,6 +2429,13 @@ generateFunction(Name, Params, Guard, Code) :-
 makeArgDefs([], []).
 makeArgDefs([Arg | Args], [def(Arg) | ArgDefs]) :-
     makeArgDefs(Args, ArgDefs).
+% asm=[destruct(arg(0)::(int64,int64),,,[_4992::int64,_5004::int64]),
+%      construct(,,[_4992::int64,arg(1)::int64],ret_val::(int64,int64))]
+% uasm=[read_field(arg(0)::(int64,int64),0,field(ret_val::(int64,int64),0)::int64),
+%       read_field(arg(0)::(int64,int64),1,_5004::int64),
+%       deallocate(arg(0)::(int64,int64),2),
+%       allocate(2,ret_val::(int64,int64)),
+%       assign(field(ret_val::(int64,int64),1)::int64,arg(1)::int64)]
 
 % ============= Prelude =============
 :- compileStatement((class T : delete where { X del T -> X }),
