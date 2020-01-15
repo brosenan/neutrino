@@ -1227,62 +1227,39 @@ test(assign) :-
 :- end_tests(specialize).
 
 specialize([], []).
-specialize([literal(Val, Val::_) | AsmIn], AsmOut) :-
-    trace(AsmIn),
-    !specialize(AsmIn, AsmOut).
-specialize([construct(Name, Args, Term::_) | AsmIn], AsmOut) :-
+specialize([First | Rest], Out) :-
+    trace([First | Rest]),
+    specializeStep(First, Replace) ->
+        append(Replace, Rest, AfterStep),
+        specialize(AfterStep, Out)
+        ;
+        Out = [First | RestOut],
+        specialize(Rest, RestOut).
+
+specializeStep(literal(Val, Val::_), []).
+specializeStep(construct(Name, Args, Term::_), []) :-
+    Term =.. [Name | Args].
+specializeStep(destruct(Term::_, Name, DerefArgs), []) :-
+    nonvar(Term),
     Term =.. [Name | Args],
-    trace(AsmIn),
-    !specialize(AsmIn, AsmOut).
-specialize([destruct(Term::Type, Name, DerefArgs) | AsmIn], AsmOut) :-
-    var(Term) ->
-        AsmOut = [destruct(Term::Type, Name, DerefArgs) | AsmMid],
-        trace(AsmIn),
-        !specialize(AsmIn, AsmMid)
-        ;
-        Term =.. [Name | Args],
-        !makeDerefTypes(Args, DerefArgs),
-        trace(AsmIn),
-        !specialize(AsmIn, AsmOut).
-specialize([destruct_ref(Term::(&Type), Name, RefArgs) | AsmIn], AsmOut) :-
-    var(Term) ->
-        AsmOut = [destruct_ref(Term::(&Type), Name, RefArgs) | AsmMid],
-        trace(AsmIn),
-        !specialize(AsmIn, AsmMid)
-        ;
-        Term =.. [Name | Args],
-        !makeRefTypes(Args, RefArgs),
-        trace(AsmIn),
-        !specialize(AsmIn, AsmOut).
-specialize([call(Name, Args, TypeGuard, Result) | AsmIn], AsmOut) :-
+    !makeDerefTypes(Args, DerefArgs).
+specializeStep(destruct_ref(Term::(&_), Name, RefArgs), []) :-
+    nonvar(Term),
+    Term =.. [Name | Args],
+    !makeRefTypes(Args, RefArgs).
+specializeStep(call(Name, Args, TypeGuard, Result), Body) :-
     removeRefs(Args, ArgsNoRefs),
     (function_impl(Name, TypeGuard, ArgsNoRefs, Body, Result) ->
-        append(Body, AsmIn, Asm1),
-        trace(Asm1),
-        !specialize(Asm1, AsmOut)
+        true
         ;
         forall(member(ArgNoRefs::_, ArgsNoRefs), ground(ArgNoRefs)),
         Func =.. [Name | ArgsNoRefs],
-        constant_propagation(Func, Result) ->
-            trace(AsmIn),
-            !specialize(AsmIn, AsmOut)
-            ;
-            AsmOut = [call(Name, ArgsNoRefs, TypeGuard, Result) | Asm2],
-            trace(AsmIn),
-            !specialize(AsmIn, Asm2)).
-specialize([case(Expr, Branches) | AsmIn], AsmOut) :-
-    var(Expr) ->
-        AsmOut = [case(Expr, Branches) | Asm1],
-        trace(AsmIn),
-        !specialize(AsmIn, Asm1)
-        ;
-        selectAsmBranch(Branches, Branch),
-        append(Branch, AsmIn, Asm2),
-        trace(Asm2),
-        !specialize(Asm2, AsmOut).
-
-specialize([assign(Val, Val) | AsmIn], AsmOut) :-
-    specialize(AsmIn, AsmOut).
+        constant_propagation(Func, Result),
+        Body = []).
+specializeStep(case(Expr, Branches), Branch) :-
+    nonvar(Expr),
+    selectAsmBranch(Branches, Branch).
+specializeStep(assign(Val, Val), []).
 
 % trace(Asm) :- writeln(trace=Asm).
 trace(_).
