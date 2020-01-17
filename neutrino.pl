@@ -1911,50 +1911,94 @@ reuseSpaceInBranches([Branch | Branches], [OptBranch | OptBranches]) :-
 % if both sides are equal.
 
 % Reading an assignment adds this assignment to the state.
+test(learn_binding) :-
+    reuseData([assign(var(1)::int64, arg(2)::int64)], [], State, UAsm),
+    State == [var(1)=arg(2)],
+    UAsm == [assign(var(1)::int64, arg(2)::int64)].
 
-% reuseData removes micro-assembly commands which read a field to itself.
-test(read_field) :-
-    reuseData([literal("hello", S::string),
-               read_field(Foo::footype, 1, field(Foo::footype, 1)::int64),
-               read_field(Foo::footype, 1, field(_::footype, 1)::int64),
-               read_field(Foo::footype, 1, field(Foo::footype, 2)::int64),
-               read_field(Foo::footype, 2, field(Foo::footype, 2)::int64)], UAsm),
-    UAsm =@= [literal("hello", S::string),
-                read_field(Foo::footype, 1, field(_::footype, 1)::int64),
-                read_field(Foo::footype, 1, field(Foo::footype, 2)::int64)].
+% An assignment from X to Y is removed when the state has X=Y.
+test(remove_when_equal) :-
+    reuseData([assign(var(1)::int64, arg(2)::int64)], [var(1)=arg(2)], State, UAsm),
+    State == [var(1)=arg(2)],
+    UAsm == [].
+
+% An assignment from X to Y is removed when the state has Y=X.
+test(remove_when_equal2) :-
+    reuseData([assign(arg(2)::int64, var(1)::int64)], [var(1)=arg(2)], State, UAsm),
+    State == [var(1)=arg(2)],
+    UAsm == [].
+
+% Two fields are considered equal if they they share the same index and the the objects
+% are equal.
+test(field_equality) :-
+    reuseData([assign(arg(2)::foo, var(1)::foo),
+               assign(field(arg(2)::foo, 1)::int64, field(var(1)::foo, 1)::int64)],
+                [], State, UAsm),
+    State == [arg(2)=var(1)],
+    UAsm == [assign(arg(2)::foo, var(1)::foo)].
+
+% Equality is transitive. If X=Y and Y=Z then X=Z.
+test(transitivity) :-
+    reuseData([assign(var(0)::int64, var(1)::int64),
+               assign(var(1)::int64, var(2)::int64),
+               assign(var(0)::int64, var(2)::int64)], [], State, UAsm),
+    State == [var(1)=var(2), var(0)=var(1)],
+    UAsm == [assign(var(0)::int64, var(1)::int64),
+             assign(var(1)::int64, var(2)::int64)].
 
 % The case command applies this optimization on each branch.
 test(case) :-
     reuseData([case(_::footype, [
-               [read_field(Foo::footype, 1, field(Foo::footype, 1)::int64),
-                read_field(Foo::footype, 1, field(_::footype, 1)::int64)],
-               [read_field(Foo::footype, 1, field(Foo::footype, 2)::int64),
-                read_field(Foo::footype, 2, field(Foo::footype, 2)::int64)]]),
-               literal("hello", _::string)], UAsm),
+               [assign(var(0)::int64, var(1)::int64),
+                assign(var(1)::int64, var(2)::int64),
+                assign(var(0)::int64, var(2)::int64)],
+               [assign(var(3)::int64, var(4)::int64)]]),
+               literal("hello", _::string)], [], State, UAsm),
     UAsm =@= [case(_::footype, [
-               [read_field(Foo1::footype, 1, field(_::footype, 1)::int64)],
-               [read_field(Foo1::footype, 1, field(Foo1::footype, 2)::int64)]]),
-               literal("hello", _::string)].
+               [assign(var(0)::int64, var(1)::int64),
+                assign(var(1)::int64, var(2)::int64)],
+               [assign(var(3)::int64, var(4)::int64)]]),
+               literal("hello", _::string)],
+    State == [].
 :- end_tests(reuseData).
 
-reuseData([], []).
-reuseData([Cmd | UAsmIn], UAsmOut) :-
-    Cmd = read_field(Obj1, N1, field(Obj2, N2)::_),
-    (Obj1, N1) == (Obj2, N2) ->
-        reuseData(UAsmIn, UAsmOut)
+reuseData([], State, State, []).
+reuseData([Cmd | UAsmIn], StateIn, StateOut, UAsmOut) :-
+    (reuseDataStep(Cmd, StateIn, StateMid, UAsmCmd) ->
+        append(UAsmCmd, UAsmMid, UAsmOut)
         ;
-        Cmd = case(Expr, Branches) ->
-            reuseDataInBranches(Branches, OptBranches),
-            UAsmOut = [case(Expr, OptBranches) | UAsmMid],
-            reuseData(UAsmIn, UAsmMid)
-            ;
-            UAsmOut = [Cmd | UAsmMid],
-            reuseData(UAsmIn, UAsmMid).
+        UAsmOut = [Cmd | UAsmMid],
+        StateMid = StateIn),
+    reuseData(UAsmIn, StateMid, StateOut, UAsmMid).
 
-reuseDataInBranches([], []).
-reuseDataInBranches([Branch | Branches], [OptBranch | OptBranches]) :-
-    reuseData(Branch, OptBranch),
-    reuseDataInBranches(Branches, OptBranches).
+reuseDataStep(assign(X::Type, Y::Type), StateIn, StateOut, UAsmOut) :-
+    isEqual(X, Y, StateIn, []) ->
+        StateOut=StateIn,
+        UAsmOut = []
+        ;
+        StateOut = [X=Y | StateIn],
+        UAsmOut = [assign(X::Type, Y::Type)].
+reuseDataStep(case(Expr, BranchesIn), State, State, [case(Expr, BranchesOut)]) :-
+    reuseDataBranches(BranchesIn, State, BranchesOut).
+
+isEqual(X, X, _, _).
+isEqual(X, Z, State, History) :-
+    isEqualStep(X, Y, State),
+    \+member(Y, History),
+    isEqual(Y, Z, State, [X | History]).
+
+isEqualStep(X, Y, State) :-
+    member(X=Y, State).
+isEqualStep(X, Y, State) :-
+    member(Y=X, State).
+isEqualStep(field(O1::T1, F), field(O2::T1, F), State) :-
+    isEqualStep(O1, O2, State).
+
+reuseDataBranches([], _, []).
+reuseDataBranches([BranchIn | BranchesIn], State, [BranchOut | BranchesOut]) :-
+    reuseData(BranchIn, State, _, BranchOut),
+    reuseDataBranches(BranchesIn, State, BranchesOut).
+
 
 :- begin_tests(tre).
 
@@ -2068,7 +2112,7 @@ test(list_sum) :-
     specialize(Asm, Asm1),
     !microAsm(Asm1, 0, _, UAsm1),
     !reuseSpace(UAsm1, UAsm2),
-    !reuseData(UAsm2, UAsm3),
+    !reuseData(UAsm2, [], _, UAsm3),
     !tre(UAsm3, list_sum, Params, Guard, UAsm),
     UAsm == [case(arg(0)::list(int64),[
                 [assign(arg(1)::int64, ret_val::int64),
@@ -2090,7 +2134,7 @@ test(increment_list) :-
     !assignArgs(Args, 0),
     !microAsm(Asm, 0, _, UAsm1),
     !reuseSpace(UAsm1, UAsm2),
-    !reuseData(UAsm2, UAsm3),
+    !reuseData(UAsm2, [], _, UAsm3),
     !tre(UAsm3, increment_list, Params, Guard, UAsm),
     UAsm == [case(arg(0)::list(int64),[
                 [assign_sentinel(0,ret_val::list(int64)),
@@ -2115,7 +2159,7 @@ test(fibonacci) :-
     !assignArgs(Args, 0),
     !microAsm(Asm, 0, _, UAsm1),
     !reuseSpace(UAsm1, UAsm2),
-    !reuseData(UAsm2, UAsm3),
+    !reuseData(UAsm2, [], _, UAsm3),
     tre(UAsm3, fibonacci, Params, Guard, UAsm),
     walk(UAsm, findLocalVars, [], Locals),
     walk(UAsm, declareLocalVars, Locals, _),
@@ -2417,7 +2461,6 @@ test(replace_second) :-
             "  v1 = *(int64_t*)(a0 + 1);",
             "  *ret_val = a0;",
             "  *(int64_t*)(*ret_val + 1) = a1;",
-            "  *(int64_t*)(*ret_val + 0) = v0;",
             "}"
         ]), Expected),
     Expected == Actual.
@@ -2435,7 +2478,7 @@ generateFunction(Name, Params, Guard, Code) :-
     !append(Args, [ret_val::RetType], AllArgs),
     !makeArgDefs(AllArgs, ArgDefs),
     !reuseSpace(UAsm1, UAsm2),
-    !reuseData(UAsm2, UAsm),
+    !reuseData(UAsm2, [], _, UAsm),
     walk(UAsm, findLocalVars, [], VarDecls1),
     walk(UAsm, declareLocalVars, VarDecls1, VarDecls),
     !termToC(lines("", [
