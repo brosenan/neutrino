@@ -2240,8 +2240,15 @@ test(delimited3) :-
 % If one lines construct is nested within another, all lines get the sum of both
 % prefixes.
 test(nested_lines) :-
-    termToC(lines(tab, ["foo", lines(tab, ["bar", "baz"])]), Lines),
-    Lines == "  foo\n    bar\n    baz\n".
+    termToC(lines(tab, ["foo", 
+                        lines(tab, ["bar", 
+                                    lines(tab, ["quux"]),
+                                    "baz"])]), Lines),
+    termToC(lines("", [
+        "  foo",
+        "    bar",
+        "      quux",
+        "    baz"]), Lines).
 
 % Built-in Neutrino types are converted to corresponding C(++) types.
 test(built_in_types) :-
@@ -2340,6 +2347,16 @@ test(decl) :-
     termToC(decl(var(2), maybe(bool)), Code),
     Code == "pointer v2;".
 
+% Recur maps to a sequence of assignments to aN followed by an assignment to ret_val.
+test(recur) :-
+    termToC(recur([var(2)::int64_t, var(1)::list(int64_t)], var(4)::int64_t), Code),
+    writeln(Code),
+    termToC(lines("", [
+        "a0 = v2;",
+        "a1 = v1;",
+        "ret_val = v4;"
+    ]), Code).
+
 :- end_tests(termToC).
 
 termToC(Term, String) :-
@@ -2361,13 +2378,18 @@ termToC(Term, String) :-
                     !termToCTerm(Term, CTerm),
                     termToC(CTerm, String).
 
+termToCTermRec(X, X).
+termToCTermRec(X, Z) :-
+    termToCTerm(X, Y),
+    termToCTermRec(Y, Z).
+
 termToCTerm(tab, "  ").
 termToCTerm(lines(_, []), "").
 termToCTerm(lines(Prefix, [Line | Lines]), Output) :-
-    Line = lines(Prefix2, Lines2) ->
+    termToCTermRec(Line, lines(Prefix2, Lines2)) ->
         Output = [lines([Prefix, Prefix2], Lines2), lines(Prefix, Lines)]
         ;
-        Output = [Prefix, Line, "\n" | lines(Prefix, Lines)].
+        Output = [Prefix, Line, "\n", lines(Prefix, Lines)].
 termToCTerm(delimited(_, []), []).
 termToCTerm(delimited(_, [Item]), [Item]).
 termToCTerm(delimited(Delim, [Item0, Item1 | Items]), 
@@ -2400,13 +2422,20 @@ termToCTerm(case(Expr, Branches), lines("", [["switch(*(int64_t*)", Expr, ") {"]
                                              "}"])).
 termToCTerm(cases([], _), []).
 termToCTerm(cases([Branch | Branches], N),
-        [lines(tab, [["case ", N, ":"],
+        lines("", [lines(tab, [["case ", N, ":"],
                     lines(tab, Branch),
                     [tab, "break;"]]),
-        cases(Branches, N1)]) :-
+                   cases(Branches, N1)])]) :-
     N1 is N + 1.
 termToCTerm(decl(Var, Type), [Type, " ", Var::Type, ";"]).
 termToCTerm(def(Var::Type), [Type, " ", Var::Type]).
+termToCTerm(recur(Args, Ret), lines("", [recur_assign(Args, 0),
+                                         ["ret_val = ", Ret, ";"]])).
+termToCTerm(recur_assign([], _), "").
+termToCTerm(recur_assign([First::Type | Rest], N),
+        [lines("", [assign(First::Type, arg(N)::Type)]),
+         recur_assign(Rest, N1)]) :-
+    N1 is N + 1.
 
 escape(S, Escaped) :-
     string_chars(S, Chars),
@@ -2443,6 +2472,7 @@ test(inc) :-
             "  int64_t v0;",
             "  v0 = 1;",
             "  int64_plus(a0, v0, &*ret_val);",
+            "  return;",
             "}"
         ]), Expected),
     Expected == Actual.
@@ -2461,15 +2491,53 @@ test(replace_second) :-
             "  v1 = *(int64_t*)(a0 + 1);",
             "  *ret_val = a0;",
             "  *(int64_t*)(*ret_val + 1) = a1;",
+            "  return;",
             "}"
         ]), Expected),
     Expected == Actual.
+
+test(increment_list) :-
+    !compileStatement((declare increment_list(list(int64)) -> list(int64)), [], none),
+    !compileStatement((increment_list(L) := case L of {
+        [] => [];
+        [N | Ns] => [N + 1 | increment_list(Ns)]
+    }), ['L'=L, 'N'=N, 'Ns'=Ns], none),
+    my_assert(generated_name(increment_list, [_::list(int64)], [], "increment_list3")),
+    my_assert(generated_name(+, [_::int64, _::int64], [int64:plus], "_plus_3")),
+    generateFunction(increment_list, [var(4)::list(int64)], [], Actual),
+    termToC(lines("", [
+        "void increment_list3(pointer a0, pointer *ret_val) {",
+        "  int64_t v2;",
+        "  pointer v1;",
+        "  int64_t v0;",
+        "  switch (*a0) {",
+        "    case 0:",
+        "      *ret_val = _sentinel + 0;",
+        "      break;",
+        "    case 1:",
+        "      v0 = *(int64_t*)(a0 + 1);",
+        "      v1 = *(pointer*)(a0 + 2);",
+        "      *ret_val = a0;",
+        "      *(int64_t*)(*ret_val + 0) = 1;",
+        "      v2 = 1;",
+        "      _plus_3(v0, v2, &*(int64_t*)(*ret_val + 1));",
+        "      a0 = v1;",
+        "",
+        "      ret_val = *(pointer*)(*ret_val + 2);",
+        "      break;",
+        "  }",
+        "}"
+    ]), Expected),
+    writeln(Expected),
+    writeln(Actual),
+    Actual == Expected.
 
 :- end_tests(generateFunction).
 
 generateFunction(Name, Params, Guard, Code) :-
     !sameLength(Params, Args),
     !function_impl(Name, Guard, Args, Asm1, ret_val::RetType),
+    copy_term((Guard, Args), (Guard1, Args1)),
     !specialize(Asm1, Asm2),
     !normalizeAssembly(Asm2, Asm),
     !generated_name(Name, Args, Guard, CName),
@@ -2478,7 +2546,8 @@ generateFunction(Name, Params, Guard, Code) :-
     !append(Args, [ret_val::RetType], AllArgs),
     !makeArgDefs(AllArgs, ArgDefs),
     !reuseSpace(UAsm1, UAsm2),
-    !reuseData(UAsm2, [], _, UAsm),
+    !reuseData(UAsm2, [], _, UAsm3),
+    !tre(UAsm3, Name, Args1, Guard1, UAsm),
     walk(UAsm, findLocalVars, [], VarDecls1),
     walk(UAsm, declareLocalVars, VarDecls1, VarDecls),
     !termToC(lines("", [
