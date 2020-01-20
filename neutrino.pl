@@ -1623,82 +1623,85 @@ normalizeBranches([Branch | Branches], [NormBranch | NormBranches]) :-
 % Micro-assembly is a language similar to our assembly language, in which memory
 % operations (construct, destruct and destruct_ref) are broken down into smaller
 % pieces, namely allocate() and deallocate() for memory management, and field()
-% and read_field() to access individual fields.
+% access individual fields.
 
-% Calls & literals are unaffected by microAsm.
+% Calls & literals are unaffected by microAsm, except their output value is unified
+% with a concrete variable name (var(N)).
 test(unaffected) :-
     microAsm([literal(2, Two::int64),
-              call(+, [Two::int64, X::int64], [int64:plus], XPlusTwo::int64)], UAsm),
-    UAsm == [literal(2, Two::int64),
-             call(+, [Two::int64, X::int64], [int64:plus], XPlusTwo::int64)].
+              call(+, [Two::int64, _::int64], [int64:plus], _::int64)],
+                0, _, UAsm),
+    UAsm =@= [literal(2, var(0)::int64),
+              call(+, [var(0)::int64, _::int64], [int64:plus], var(1)::int64)].
 
 % construct() of a struct with one or more elements is replaced by allocate() with 
 % the number of fields, and the fields themselves are bound with field() with the
-% respective offset of each field.
+% respective offset of each field. The result is bound to a numbered variable.
 test(construct_struct) :-
     microAsm([construct(',', [X::int64, S::string], _::(int64, string)),
               literal(7, X::int64),
-              literal("hello", S::string)], UAsm),
-    UAsm =@= [allocate(2, Struct::(int64, string)),
-              literal(7, field(Struct::(int64, string), 0)::int64),
-              literal("hello", field(Struct::(int64, string), 1)::string)].
+              literal("hello", S::string)], 0, _, UAsm),
+    UAsm =@= [allocate(2, var(0)::(int64, string)),
+              literal(7, field(var(0)::(int64, string), 0)::int64),
+              literal("hello", field(var(0)::(int64, string), 1)::string)].
 
 % construct of a union type with one or more elements is replaced with allocate() with
 % the number of fields + 1 (for the option number), and an assignment of field 0 to the
 % option number. Fields are then numbered starting at 1.
 test(construct_option) :-
     microAsm([construct(just, [S::string], _::maybe(string)),
-              literal("hello", S::string)], UAsm),
-    UAsm =@= [allocate(2, Struct::maybe(string)),
-              literal(0, field(Struct::maybe(string), 0)::int64),
-              literal("hello", field(Struct::maybe(string), 1)::string)].
+              literal("hello", S::string)], 0, _, UAsm),
+    UAsm =@= [allocate(2, var(0)::maybe(string)),
+              literal(0, field(var(0)::maybe(string), 0)::int64),
+              literal("hello", field(var(0)::maybe(string), 1)::string)].
 
 % Constructing an option of arity zero assigns a sentinel with the value of the option.
 test(construct_empty_option) :-
     microAsm([construct(none, [], None::maybe(string)),
-              call(==, [None::maybe(string), _::maybe(string)], [], _::bool)], UAsm),
-    UAsm =@= [assign_sentinel(1, None1::maybe(string)),
-              call(==, [None1::maybe(string), _::maybe(string)], [], _::bool)].
+              call(==, [None::maybe(string), _::maybe(string)], [], _::bool)],
+              0, _, UAsm),
+    UAsm =@= [assign_sentinel(1, var(0)::maybe(string)),
+              call(==, [var(0)::maybe(string), _::maybe(string)], [], var(1)::bool)].
 
-% destruct_ref of a struct maps to a sequence of read_field() commands starting with
-% offset 0.
+% destruct_ref of a struct maps to a sequence of assign() commands for fields starting
+% with offset 0.
 test(destruct_ref_struct) :-
     microAsm([destruct_ref(_::(&((int64, string))), ',', [A::(&int64), S::(&string)]),
-              call(foo, [A::(&int64), S::(&string)], [], _::bool)], UAsm),
-    UAsm =@= [read_field(Tuple::(&((int64,string))), 0, A1::(&int64)),
-              read_field(Tuple::(&((int64,string))), 1, S1::(&string)),
-              call(foo, [A1::(&int64), S1::(&string)], [], _::bool)].
+              call(foo, [A::(&int64), S::(&string)], [], _::bool)], 0, _, UAsm),
+    UAsm =@= [assign(field(Tuple::(&((int64,string))), 0)::(&int64), var(0)::(&int64)),
+              assign(field(Tuple::(&((int64,string))), 1)::(&string), var(1)::(&string)),
+              call(foo, [var(0)::(&int64), var(1)::(&string)], [], var(2)::bool)].
 
-% destruct_ref of a union option maps to a sequence of read_field() commands starting
-% with offset 1 (as offset 0 is reserved for the option indicator).
+% destruct_ref of a union option maps to a sequence of assign() commands with fields
+% starting with offset 1 (as offset 0 is reserved for the option indicator).
 test(destruct_ref_option) :-
     microAsm([destruct_ref(_::(&maybe(string)), just, [S::(&string)]),
-              call(foo, [S::(&string)], [], _::bool)], UAsm),
-    UAsm =@= [read_field(_::(&maybe(string)), 1, S1::(&string)),
-              call(foo, [S1::(&string)], [], _::bool)].
+              call(foo, [S::(&string)], [], _::bool)], 0, _, UAsm),
+    UAsm =@= [assign(field(_::(&maybe(string)), 1)::(&string), var(0)::(&string)),
+              call(foo, [var(0)::(&string)], [], var(1)::bool)].
 
-% destruct of a struct maps to a sequence of read_field() commands starting at 0,
+% destruct of a struct maps to a sequence of assign() commands with fields starting at 0,
 % followed by a deallocate() command with the arity.
 test(destruct_struct) :-
     microAsm([destruct(_::(&((int64, string))), ',', [A::(&int64), S::(&string)]),
-              call(foo, [A::(&int64), S::(&string)], [], _::bool)], UAsm),
-    UAsm =@= [read_field(Tuple::(&((int64,string))), 0, A1::(&int64)),
-              read_field(Tuple::(&((int64,string))), 1, S1::(&string)),
+              call(foo, [A::(&int64), S::(&string)], [], _::bool)], 0, _, UAsm),
+    UAsm =@= [assign(field(Tuple::(&((int64,string))), 0)::(&int64), var(0)::(&int64)),
+              assign(field(Tuple::(&((int64,string))), 1)::(&string), var(1)::(&string)),
               deallocate(Tuple::(&((int64,string))), 2),
-              call(foo, [A1::(&int64), S1::(&string)], [], _::bool)].
+              call(foo, [var(0)::(&int64), var(1)::(&string)], [], var(2)::bool)].
 
-% destruct of a non-empty union option maps to a sequence of read_field() commands
-% starting at 1, followed by a deallocate() with the arity + 1.
+% destruct of a non-empty union option maps to a sequence of assign() commands
+% with fields starting at 1, followed by a deallocate() with the arity + 1.
 test(destruct_option) :-
     microAsm([destruct(_::(&maybe(string)), just, [S::(&string)]),
-              call(foo, [S::(&string)], [], _::bool)], UAsm),
-    UAsm =@= [read_field(Maybe::(&maybe(string)), 1, S1::(&string)),
+              call(foo, [S::(&string)], [], _::bool)], 0, _, UAsm),
+    UAsm =@= [assign(field(Maybe::(&maybe(string)), 1)::(&string), var(0)::(&string)),
               deallocate(Maybe::(&maybe(string)), 2),
-              call(foo, [S1::(&string)], [], _::bool)].
+              call(foo, [var(0)::(&string)], [], var(1)::bool)].
 
 % destruct of an empty union option is ignored.
 test(destruct_empty_option) :-
-    microAsm([destruct(_::(&maybe(string)), none, [])], UAsm),
+    microAsm([destruct(_::(&maybe(string)), none, [])], 0, _, UAsm),
     UAsm =@= [].
 
 % In case commands each branch is converted separately. assign commands are removed
@@ -1711,40 +1714,41 @@ test(case) :-
                  [destruct(M::(&maybe(string)), none, []),
                   construct(true, [], True::bool),
                   assign(True::bool, Result::bool)]]),
-              literal(3, _::int64)], UAsm),
+              literal(3, _::int64)], 0, _, UAsm),
     UAsm =@= [case(M1::(&maybe(string)),
-                [[read_field(M1::(&maybe(string)), 1, S1::(&string)),
+                [[assign(field(M1::(&maybe(string)), 1)::(&string), var(0)::(&string)),
                   deallocate(M1::(&maybe(string)), 2),
-                  call(foo, [S1::(&string)], [], Result1::bool)],
-                 [assign_sentinel(0,Result1::bool)]]),
-              literal(3, _::int64)].
-
+                  call(foo, [var(0)::(&string)], [], var(1)::bool)],
+                 [assign_sentinel(0,var(1)::bool)]]),
+              literal(3, var(2)::int64)].
 
 :- end_tests(microAsm).
 
-microAsm([], []).
-microAsm([Cmd | Asm], UAsm) :-
-    (Cmd = construct(Name, Args, Val) ->
-        !once(constructMicroAsm(Name, Args, Val, ConsUAsm)),
-        append(ConsUAsm, RestUAsm, UAsm)
+microAsm([], N, N, []).
+microAsm([Cmd | Asm], N1, N9, UAsm) :-
+    (microAsmStep(Cmd, N1, N2, StepUAsm) ->
+        append(StepUAsm, RestUAsm, UAsm)
         ;
-        Cmd = destruct(Val, Name, Args) ->
-            once(destructMicroAsm(Val, Name, Args, DestUAsm)),
-            append(DestUAsm, RestUAsm, UAsm)
-            ;
-            Cmd = destruct_ref(Val, Name, Args) ->
-                once(destructRefMicroAsm(Val, Name, Args, DestUAsm)),
-                append(DestUAsm, RestUAsm, UAsm)
-                ;
-                Cmd = case(Val, Branches) ->
-                    branchesMicroAssembly(Branches, BranchesUAsm),
-                    UAsm = [case(Val, BranchesUAsm) | RestUAsm]
-                    ;
-                    Cmd = assign(A, A) ->
-                        UAsm = RestUAsm
-                        ;
-                        UAsm = [Cmd | RestUAsm]),
-    !microAsm(Asm, RestUAsm).
+        UAsm = [Cmd | RestUAsm],
+        N2 = N1),
+    !microAsm(Asm, N2, N9, RestUAsm).
+
+microAsmStep(literal(Val, Var), N1, N2, [literal(Val, Var)]) :-
+    assignVarIfUnbound(Var, N1, N2).
+microAsmStep(call(Name, Args, Guard, Var), N1, N2,
+        [call(Name, Args, Guard, Var)]) :-
+    assignVarIfUnbound(Var, N1, N2).
+microAsmStep(construct(Name, Args, Var), N1, N2, StepUAsm) :-
+    !once(constructMicroAsm(Name, Args, Var, StepUAsm)),
+    assignVarIfUnbound(Var, N1, N2).
+microAsmStep(destruct(Val, Name, Args), N1, N2, StepUAsm) :-
+    once(destructMicroAsm(Val, Name, Args, N1, N2, StepUAsm)).
+microAsmStep(destruct_ref(Val, Name, Args), N1, N2, StepUAsm) :-
+    once(destructRefMicroAsm(Val, Name, Args, N1, N2, StepUAsm)).
+microAsmStep(case(Val, Branches), N1, N2, [case(Val, BranchesUAsm)]) :-
+    !branchesMicroAssembly(Branches, N1, N2, BranchesUAsm).
+microAsmStep(assign(X, Y), N1, N2, [assign(X, Y)]) :-
+    assignVarIfUnbound(Y, N1, N2).
 
 constructMicroAsm(Name, Args, Struct, [allocate(Arity, Struct) | AssignFields]) :-
     length(Args, Arity),
@@ -1762,51 +1766,64 @@ constructMicroAsm(Name, Args, Struct, [allocate(ArityPlusOne, Struct),
 constructMicroAsm(Name, [], Struct, [assign_sentinel(N, Struct)]) :-
     is_option(Name/0, N).
 
-destructMicroAsm(Val, Name, Args, DestUAsm) :-
+destructMicroAsm(Val, Name, Args, N1, N2, DestUAsm) :-
     length(Args, Arity),
     is_struct(Name/Arity),
-    readFieldsMicroAsm(Args, Val, 0, ReadFields),
-    append(ReadFields, [deallocate(Val, Arity)], DestUAsm).
+    readFieldsMicroAsm(Args, Val, 0, N1, N2, ReadFields),
+    !append(ReadFields, [deallocate(Val, Arity)], DestUAsm).
 
-destructMicroAsm(Val, Name, Args, DestUAsm) :-
+destructMicroAsm(Val, Name, Args, N1, N2, DestUAsm) :-
     length(Args, Arity),
     Arity > 0,
     is_option(Name/Arity, _),
-    readFieldsMicroAsm(Args, Val, 1, ReadFields),
+    readFieldsMicroAsm(Args, Val, 1, N1, N2, ReadFields),
     ArityPlusOne is Arity + 1,
-    append(ReadFields, [deallocate(Val, ArityPlusOne)], DestUAsm).
+    !append(ReadFields, [deallocate(Val, ArityPlusOne)], DestUAsm).
 
-destructMicroAsm(_, Name, [], []) :-
+destructMicroAsm(_, Name, [], N, N, []) :-
     is_option(Name/0, _).
 
-destructRefMicroAsm(Val, Name, Args, DestUAsm) :-
+destructRefMicroAsm(Val, Name, Args, N1, N2, DestUAsm) :-
     length(Args, Arity),
     is_struct(Name/Arity),
-    readFieldsMicroAsm(Args, Val, 0, DestUAsm).
+    readFieldsMicroAsm(Args, Val, 0, N1, N2, DestUAsm).
 
-destructRefMicroAsm(Val, Name, Args, DestUAsm) :-
+destructRefMicroAsm(Val, Name, Args, N1, N2, DestUAsm) :-
     length(Args, Arity),
     is_option(Name/Arity, _),
-    readFieldsMicroAsm(Args, Val, 1, DestUAsm).
+    readFieldsMicroAsm(Args, Val, 1, N1, N2, DestUAsm).
 
 assignFields([], _, _, AssignFields, AssignFields).
 assignFields([Arg::Type | Args], Struct, N, AssignFieldsIn, AssignFieldsOut) :-
     (Arg = field(Struct, N) ->
         AssignFieldsMid = AssignFieldsIn
         ;
-        AssignFieldsMid = [assign(field(Struct, N)::Type, Arg::Type) | AssignFieldsIn]),
+        AssignFieldsMid = [assign(Arg::Type, field(Struct, N)::Type) | AssignFieldsIn]),
     N1 is N + 1,
     assignFields(Args, Struct, N1, AssignFieldsMid, AssignFieldsOut).
 
-readFieldsMicroAsm([], _, _, []).
-readFieldsMicroAsm([Arg | Args], Val, N, [read_field(Val, N, Arg) | DestUAsm]) :-
+readFieldsMicroAsm([], _, _, V, V, []).
+readFieldsMicroAsm([Var::Type | Args], Val, N, V1, V9,
+        [assign(field(Val, N)::Type, Var::Type) | DestUAsm]) :-
     N1 is N + 1,
-    readFieldsMicroAsm(Args, Val, N1, DestUAsm).
+    assignVarIfUnbound(Var::Type, V1, V2),
+    readFieldsMicroAsm(Args, Val, N1, V2, V9, DestUAsm).
 
-branchesMicroAssembly([], []).
-branchesMicroAssembly([Branch | Branches], [BranchUAsm | BranchesUAsm]) :-
-    microAsm(Branch, BranchUAsm),
-    branchesMicroAssembly(Branches, BranchesUAsm).
+branchesMicroAssembly([], N, N, []).
+branchesMicroAssembly([Branch | Branches], N1, N9, [BranchUAsm | BranchesUAsm]) :-
+    !append(Branch1, [Last], Branch),
+    !(Last = assign(X, X) ->
+        Branch2 = Branch1
+        ;
+        Branch2 = Branch),
+    !microAsm(Branch2, N1, N2, BranchUAsm),
+    !branchesMicroAssembly(Branches, N2, N9, BranchesUAsm).
+
+assignVarIfUnbound(Var::_, N1, N2) :-
+    Var = var(N1) ->
+        N2 is N1 + 1
+        ;
+        N2 = N1.
 
 :- begin_tests(reuseSpace).
 
@@ -1843,18 +1860,18 @@ test(remove_allocation) :-
 test(case) :-
     reuseSpace([case(X::footype, [
                 [deallocate(X::footype, 3),
-                 read_field(X::footype, 1, _::int64),
+                 assign(field(X::footype, 1), _::int64),
                  allocate(3, Bar::bartype),
                  literal("hello", field(Bar::bartype, 2)::string)],
                 [deallocate(X::footype, 2),
-                 read_field(X::footype, 1, _::int64),
+                 assign(field(X::footype, 1), _::int64),
                  allocate(2, Bar::bartype),
                  literal("world", field(Bar::bartype, 1)::string)]]),
                 literal(4, _::int64)], UAsm),
     UAsm =@= [case(X1::footype, [
-                [read_field(X1::footype, 1, _::int64),
+                [assign(field(X1::footype, 1), _::int64),
                  literal("hello", field(X1::bartype, 2)::string)],
-                [read_field(X1::footype, 1, _::int64),
+                [assign(field(X1::footype, 1), _::int64),
                  literal("world", field(X1::bartype, 1)::string)]]),
                 literal(4, _::int64)].
 :- end_tests(reuseSpace).
@@ -1889,55 +1906,99 @@ reuseSpaceInBranches([Branch | Branches], [OptBranch | OptBranches]) :-
 
 :- begin_tests(reuseData).
 
-% The reuseData optimization removes read_field() commands which read a field to itself.
-% Such commands can be a result of destructing something and immediately afterwards
-% constructing the same type of object, with some of the fields having the same values.
-% In such cases, the reuseSpace optimization reuses the object and this optimization
-% removes the need to copy values to themselves.
+% The reuseData optimization removes assigmnets that of values that are already equal.
+% It maintains state consisting of pairs based on assignments, and removes assigments
+% if both sides are equal.
 
-% reuseData removes micro-assembly commands which read a field to itself.
-test(read_field) :-
-    reuseData([literal("hello", S::string),
-               read_field(Foo::footype, 1, field(Foo::footype, 1)::int64),
-               read_field(Foo::footype, 1, field(_::footype, 1)::int64),
-               read_field(Foo::footype, 1, field(Foo::footype, 2)::int64),
-               read_field(Foo::footype, 2, field(Foo::footype, 2)::int64)], UAsm),
-    UAsm =@= [literal("hello", S::string),
-                read_field(Foo::footype, 1, field(_::footype, 1)::int64),
-                read_field(Foo::footype, 1, field(Foo::footype, 2)::int64)].
+% Reading an assignment adds this assignment to the state.
+test(learn_binding) :-
+    reuseData([assign(var(1)::int64, arg(2)::int64)], [], State, UAsm),
+    State == [var(1)=arg(2)],
+    UAsm == [assign(var(1)::int64, arg(2)::int64)].
+
+% An assignment from X to Y is removed when the state has X=Y.
+test(remove_when_equal) :-
+    reuseData([assign(var(1)::int64, arg(2)::int64)], [var(1)=arg(2)], State, UAsm),
+    State == [var(1)=arg(2)],
+    UAsm == [].
+
+% An assignment from X to Y is removed when the state has Y=X.
+test(remove_when_equal2) :-
+    reuseData([assign(arg(2)::int64, var(1)::int64)], [var(1)=arg(2)], State, UAsm),
+    State == [var(1)=arg(2)],
+    UAsm == [].
+
+% Two fields are considered equal if they they share the same index and the the objects
+% are equal.
+test(field_equality) :-
+    reuseData([assign(arg(2)::foo, var(1)::foo),
+               assign(field(arg(2)::foo, 1)::int64, field(var(1)::foo, 1)::int64)],
+                [], State, UAsm),
+    State == [arg(2)=var(1)],
+    UAsm == [assign(arg(2)::foo, var(1)::foo)].
+
+% Equality is transitive. If X=Y and Y=Z then X=Z.
+test(transitivity) :-
+    reuseData([assign(var(0)::int64, var(1)::int64),
+               assign(var(1)::int64, var(2)::int64),
+               assign(var(0)::int64, var(2)::int64)], [], State, UAsm),
+    State == [var(1)=var(2), var(0)=var(1)],
+    UAsm == [assign(var(0)::int64, var(1)::int64),
+             assign(var(1)::int64, var(2)::int64)].
 
 % The case command applies this optimization on each branch.
 test(case) :-
     reuseData([case(_::footype, [
-               [read_field(Foo::footype, 1, field(Foo::footype, 1)::int64),
-                read_field(Foo::footype, 1, field(_::footype, 1)::int64)],
-               [read_field(Foo::footype, 1, field(Foo::footype, 2)::int64),
-                read_field(Foo::footype, 2, field(Foo::footype, 2)::int64)]]),
-               literal("hello", _::string)], UAsm),
+               [assign(var(0)::int64, var(1)::int64),
+                assign(var(1)::int64, var(2)::int64),
+                assign(var(0)::int64, var(2)::int64)],
+               [assign(var(3)::int64, var(4)::int64)]]),
+               literal("hello", _::string)], [], State, UAsm),
     UAsm =@= [case(_::footype, [
-               [read_field(Foo1::footype, 1, field(_::footype, 1)::int64)],
-               [read_field(Foo1::footype, 1, field(Foo1::footype, 2)::int64)]]),
-               literal("hello", _::string)].
+               [assign(var(0)::int64, var(1)::int64),
+                assign(var(1)::int64, var(2)::int64)],
+               [assign(var(3)::int64, var(4)::int64)]]),
+               literal("hello", _::string)],
+    State == [].
 :- end_tests(reuseData).
 
-reuseData([], []).
-reuseData([Cmd | UAsmIn], UAsmOut) :-
-    Cmd = read_field(Obj1, N1, field(Obj2, N2)::_),
-    (Obj1, N1) == (Obj2, N2) ->
-        reuseData(UAsmIn, UAsmOut)
+reuseData([], State, State, []).
+reuseData([Cmd | UAsmIn], StateIn, StateOut, UAsmOut) :-
+    (reuseDataStep(Cmd, StateIn, StateMid, UAsmCmd) ->
+        append(UAsmCmd, UAsmMid, UAsmOut)
         ;
-        Cmd = case(Expr, Branches) ->
-            reuseDataInBranches(Branches, OptBranches),
-            UAsmOut = [case(Expr, OptBranches) | UAsmMid],
-            reuseData(UAsmIn, UAsmMid)
-            ;
-            UAsmOut = [Cmd | UAsmMid],
-            reuseData(UAsmIn, UAsmMid).
+        UAsmOut = [Cmd | UAsmMid],
+        StateMid = StateIn),
+    reuseData(UAsmIn, StateMid, StateOut, UAsmMid).
 
-reuseDataInBranches([], []).
-reuseDataInBranches([Branch | Branches], [OptBranch | OptBranches]) :-
-    reuseData(Branch, OptBranch),
-    reuseDataInBranches(Branches, OptBranches).
+reuseDataStep(assign(X::Type, Y::Type), StateIn, StateOut, UAsmOut) :-
+    isEqual(X, Y, StateIn, []) ->
+        StateOut=StateIn,
+        UAsmOut = []
+        ;
+        StateOut = [X=Y | StateIn],
+        UAsmOut = [assign(X::Type, Y::Type)].
+reuseDataStep(case(Expr, BranchesIn), State, State, [case(Expr, BranchesOut)]) :-
+    reuseDataBranches(BranchesIn, State, BranchesOut).
+
+isEqual(X, X, _, _).
+isEqual(X, Z, State, History) :-
+    isEqualStep(X, Y, State),
+    \+member(Y, History),
+    isEqual(Y, Z, State, [X | History]).
+
+isEqualStep(X, Y, State) :-
+    member(X=Y, State).
+isEqualStep(X, Y, State) :-
+    member(Y=X, State).
+isEqualStep(field(O1::T1, F), field(O2::T1, F), State) :-
+    isEqualStep(O1, O2, State).
+
+reuseDataBranches([], _, []).
+reuseDataBranches([BranchIn | BranchesIn], State, [BranchOut | BranchesOut]) :-
+    reuseData(BranchIn, State, _, BranchOut),
+    reuseDataBranches(BranchesIn, State, BranchesOut).
+
 
 :- begin_tests(tre).
 
@@ -2048,19 +2109,19 @@ test(list_sum) :-
     !function_impl(list_sum, Guard1, Args, Asm, ret_val::int64),
     copy_term((Args, Guard1), (Params, Guard)),
     !assignArgs(Args, 0),
-    !microAsm(Asm, UAsm1),
+    specialize(Asm, Asm1),
+    !microAsm(Asm1, 0, _, UAsm1),
     !reuseSpace(UAsm1, UAsm2),
-    !reuseData(UAsm2, UAsm3),
+    !reuseData(UAsm2, [], _, UAsm3),
     !tre(UAsm3, list_sum, Params, Guard, UAsm),
-    walk(UAsm, declareLocalVars, [], _),
     UAsm == [case(arg(0)::list(int64),[
                 [assign(arg(1)::int64, ret_val::int64),
-                return],
-                [read_field(arg(0)::list(int64),1,var(0)::int64),
-                read_field(arg(0)::list(int64),2,var(1)::list(int64)),
-                deallocate(arg(0)::list(int64),3),
-                call(+,[arg(1)::int64,var(0)::int64],[int64:plus],var(2)::int64),
-                recur([var(1)::list(int64),var(2)::int64], ret_val::int64)]])].
+                 return],
+                [assign(field(arg(0)::list(int64),1)::int64,var(0)::int64),
+                 assign(field(arg(0)::list(int64),2)::list(int64),var(1)::list(int64)),
+                 deallocate(arg(0)::list(int64),3),
+                 call(+,[arg(1)::int64,var(0)::int64],[int64:plus],var(2)::int64),
+                 recur([var(1)::list(int64),var(2)::int64], ret_val::int64)]])].
 
 test(increment_list) :-
     !compileStatement((declare increment_list(list(int64)) -> list(int64)), [], none),
@@ -2071,16 +2132,15 @@ test(increment_list) :-
     !function_impl(increment_list, Guard1, Args, Asm, ret_val::list(int64)),
     copy_term((Args, Guard1), (Params, Guard)),
     !assignArgs(Args, 0),
-    !microAsm(Asm, UAsm1),
+    !microAsm(Asm, 0, _, UAsm1),
     !reuseSpace(UAsm1, UAsm2),
-    !reuseData(UAsm2, UAsm3),
+    !reuseData(UAsm2, [], _, UAsm3),
     !tre(UAsm3, increment_list, Params, Guard, UAsm),
-    walk(UAsm, declareLocalVars, [], _),
     UAsm == [case(arg(0)::list(int64),[
                 [assign_sentinel(0,ret_val::list(int64)),
                  return],
-                [read_field(arg(0)::list(int64),1,var(0)::int64),
-                 read_field(arg(0)::list(int64),2,var(1)::list(int64)),
+                [assign(field(arg(0)::list(int64),1)::int64,var(0)::int64),
+                 assign(field(arg(0)::list(int64),2)::list(int64),var(1)::list(int64)),
                  assign(arg(0)::list(int64),ret_val::list(int64)),
                  literal(1,field(ret_val::list(int64),0)::int64),
                  literal(1,var(2)::int64),
@@ -2097,11 +2157,12 @@ test(fibonacci) :-
     !function_impl(fibonacci, Guard1, Args, Asm, ret_val::int64),
     copy_term((Args, Guard1), (Params, Guard)),
     !assignArgs(Args, 0),
-    !microAsm(Asm, UAsm1),
+    !microAsm(Asm, 0, _, UAsm1),
     !reuseSpace(UAsm1, UAsm2),
-    !reuseData(UAsm2, UAsm3),
+    !reuseData(UAsm2, [], _, UAsm3),
     tre(UAsm3, fibonacci, Params, Guard, UAsm),
-    walk(UAsm, declareLocalVars, [], _),
+    walk(UAsm, findLocalVars, [], Locals),
+    walk(UAsm, declareLocalVars, Locals, _),
     UAsm == [literal(0,var(0)::int64),
               call(==,[arg(0)::int64,var(0)::int64],[],var(1)::bool),
               case(var(1)::bool,[
@@ -2125,6 +2186,11 @@ declareLocalVars(Var::Type, Decls, [decl(Var, Type) | Decls]) :-
     var(Var),
     length(Decls, N),
     Var = var(N).
+
+findLocalVars(Var::Type, Decls, [decl(Var, Type) | Decls]) :-
+    nonvar(Var),
+    Var = var(_),
+    \+member(decl(Var, Type), Decls).
 
 my_assert(Foo) :- assert(Foo).
 
@@ -2233,11 +2299,6 @@ test(assign_sentinel) :-
     termToC(assign_sentinel(1, var(2)::bool), Code),
     Code == "v2 = _sentinel + 1;".
 
-% Reading an object field
-test(read_field) :-
-    termToC(read_field(var(2)::just(int64), 1, ret_val::int64), Code),
-    Code == "*ret_val = ((int64_t*)v2)[1];".
-
 % Return
 test(return) :-
     termToC(return, Code),
@@ -2329,8 +2390,6 @@ termToCTerm(assign(Src, Dest), [Dest, " = ", Src, ";"]).
 termToCTerm(allocate(Size, Dest), [Dest, " = allocate(", Size, ");"]).
 termToCTerm(deallocate(Obj, Size), ["deallocate(", Obj, ", ", Size, ");"]).
 termToCTerm(assign_sentinel(N, Dest), [Dest, " = _sentinel + ", N, ";"]).
-termToCTerm(read_field(Obj, N, Dest::Type),
-    [Dest::Type, " = ((", Type, "*)", Obj, ")[", N, "];"]).
 termToCTerm(return, "return;").
 termToCTerm(call(Name, Args, Guard, Ret),
         [CName, "(", delimited(", ", ArgsWithRet), ");"]) :-
@@ -2395,13 +2454,15 @@ test(replace_second) :-
     !generateFunction(replace_second, [var(1)::(int64, int64), var(3)::int64], [], Actual),
     termToC(lines("",
         [
-            "void replace_second2(pointer a0, int64 a1, pointer *ret_val) {",
+            "void replace_second2(pointer a0, int64_t a1, pointer *ret_val) {",
+            "  int64_t v1;",
             "  int64_t v0;",
-            "  v0 = 1;",
-            "  int64_plus(a0, v0, &*ret_val);",
+            "  v0 = *(int64_t*)(a0 + 0);",
+            "  v1 = *(int64_t*)(a0 + 1);",
+            "  *ret_val = a0;",
+            "  *(int64_t*)(*ret_val + 1) = a1;",
             "}"
         ]), Expected),
-    writeln(Actual),
     Expected == Actual.
 
 :- end_tests(generateFunction).
@@ -2413,12 +2474,13 @@ generateFunction(Name, Params, Guard, Code) :-
     !normalizeAssembly(Asm2, Asm),
     !generated_name(Name, Args, Guard, CName),
     !assignArgs(Args, 0),
-    writeln(asm=Asm),
-    !microAsm(Asm, UAsm),
-    writeln(uasm=UAsm),
+    !microAsm(Asm, 0, _, UAsm1),
     !append(Args, [ret_val::RetType], AllArgs),
     !makeArgDefs(AllArgs, ArgDefs),
-    walk(UAsm, declareLocalVars, [], VarDecls),
+    !reuseSpace(UAsm1, UAsm2),
+    !reuseData(UAsm2, [], _, UAsm),
+    walk(UAsm, findLocalVars, [], VarDecls1),
+    walk(UAsm, declareLocalVars, VarDecls1, VarDecls),
     !termToC(lines("", [
         ["void ", CName, "(", delimited(", ", ArgDefs), ") {"],
         lines(tab, VarDecls),
@@ -2429,13 +2491,6 @@ generateFunction(Name, Params, Guard, Code) :-
 makeArgDefs([], []).
 makeArgDefs([Arg | Args], [def(Arg) | ArgDefs]) :-
     makeArgDefs(Args, ArgDefs).
-% asm=[destruct(arg(0)::(int64,int64),,,[_4992::int64,_5004::int64]),
-%      construct(,,[_4992::int64,arg(1)::int64],ret_val::(int64,int64))]
-% uasm=[read_field(arg(0)::(int64,int64),0,field(ret_val::(int64,int64),0)::int64),
-%       read_field(arg(0)::(int64,int64),1,_5004::int64),
-%       deallocate(arg(0)::(int64,int64),2),
-%       allocate(2,ret_val::(int64,int64)),
-%       assign(field(ret_val::(int64,int64),1)::int64,arg(1)::int64)]
 
 % ============= Prelude =============
 :- compileStatement((class T : delete where { X del T -> X }),
