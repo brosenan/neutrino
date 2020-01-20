@@ -1,0 +1,78 @@
+class P : parser(T1, T2) where {
+    parse(P, &string, int64, T1) -> list((int64, T2))
+}.
+
+struct empty = empty.
+instance empty : parser(T, T) where {
+    parse(empty, _, N, X) := [(N, X)]
+}.
+
+instance string : parser(T, T) where {
+    parse(Token, Str, N, X) := let << {
+        TokenLen := strlen(&Token);
+        if(substr(Str, N, TokenLen) == Token,
+            [(N + TokenLen, X)],
+            [])
+    }
+}.
+
+struct charSet(F) = charSet(F).
+F : int64 -> bool =>
+instance charSet(F) : parser(T, (int64, T)) where {
+    parse(charSet(Fn), Str, N, X) := let << {
+        Char := charAt(Str, N);
+        if(Fn!Char, [(N+1, (Char, X))], [])
+    }
+}.
+
+declare concat(list(T), list(T)) -> list(T).
+concat(L1, L2) := case L1 of {
+    [] => L2;
+    [Head | Tail] => [Head | concat(Tail, L2)]
+}.
+
+declare flatten(list(list(T)), list(T)) -> list(T).
+flatten(LL, L) := case LL of {
+    [] => L;
+    [Head | Tail] => flatten(Tail, concat(L, Head))
+}.
+
+P1 : parser(T1, T2), P2 : parser(T2, T3) =>
+instance (P1, P2) : parser(T1, T3) where {
+    parse((P1, P2), Str, N, X) := let << {
+        Parses := parse(P1, Str, N, X);
+        flatten(map(Parses, (N1, Y -> parse(P2, Str, N1, Y))), [])
+    }
+}.
+
+P1 : parser(T1, T2), P2 : parser(T1, T2) =>
+instance (P1; P2) : parser(T1, T2) where {
+    parse((P1; P2), Str, N, X) := let << {
+        concat(parse(P1, Str, N, copy(&X)), parse(P2, Str, X))
+    }
+}.
+
+struct capture1(F) = capture1(F).
+F : T1 -> T2 =>
+instance capture1(F) : parser((T1, Tx), (T2, Tx)) where {
+    parse(capture1(F), Str, N, (V, X)) := [(N, (F!V, X))]
+}.
+
+struct capture2(F) = capture2(F).
+F : (T1, T2) -> T3 =>
+instance capture2(F) : parser((T1, T2, Tx), (T3, Tx)) where {
+    parse(capture1(F), Str, N, (V1, V2, X)) := [(N, (F!(V1, V2), X))]
+}.
+
+digit := charSet(C -> C >= 48 /\ C <= 57), capture1(C -> (C - 48, 10)).
+decimal := (digit; digit, decimal, capture2(((I, Scale), (D, Ten))-> (D * Scale + I, Scale*Ten))).
+integer := ("-", decimal, capture1((Value, _) -> -Value);
+            decimal, capture1((Value, _) -> Value)).
+mulSuffix(MulExpr) := (empty;
+                       "*", MulExpr, capture2(Y, X -> X*Y), mulSuffix;
+                       "/", MulExpr, capture2(Y, X -> X/Y), mulSuffix).
+mulExpr := integer, mulSuffix(mulExpr).
+addSuffix(AddExpr) := (empty;
+                       "+", AddExpr, capture2(Y, X -> X + Y), addSuffix;
+                       "-", AddExpr, capture2(Y, X -> X - Y), addSuffix).
+addExpr := mulExpr, addSuffix(addExpr).
