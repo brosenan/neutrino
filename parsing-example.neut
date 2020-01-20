@@ -68,11 +68,11 @@ digit := charSet(C -> C >= 48 /\ C <= 57), capture1(C -> (C - 48, 10)).
 decimal := (digit; digit, decimal, capture2(((I, Scale), (D, Ten))-> (D * Scale + I, Scale*Ten))).
 integer := ("-", decimal, capture1((Value, _) -> -Value);
             decimal, capture1((Value, _) -> Value)).
-mulSuffix := (empty;
-              "*", mulExpr, capture2(Y, X -> X*Y), mulSuffix;
-              "/", mulExpr, capture2(Y, X -> X/Y), mulSuffix).
-mulExpr := integer, mulSuffix.
-addSuffix := (empty;
-              "+", addExpr, capture2(Y, X -> X + Y), addSuffix;
-              "-", addExpr, capture2(Y, X -> X - Y), addSuffix).
-addExpr := mulExpr, addSuffix.
+mulSuffix(MulExpr) := (empty;
+                       "*", MulExpr, capture2(Y, X -> X*Y), mulSuffix;
+                       "/", MulExpr, capture2(Y, X -> X/Y), mulSuffix).
+mulExpr := integer, mulSuffix(mulExpr).
+addSuffix(AddExpr) := (empty;
+                       "+", AddExpr, capture2(Y, X -> X + Y), addSuffix;
+                       "-", AddExpr, capture2(Y, X -> X - Y), addSuffix).
+addExpr := mulExpr, addSuffix(addExpr).
