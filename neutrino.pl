@@ -283,38 +283,35 @@ writeln_list(S, []) :-
 
 type_signature(*, [&T], T, [T:basic_type]).
 
-type_signature(int64_eq, [int64, int64], bool, []).
-constant_propagation(int64_eq(A::int64, B::int64), V::bool) :-
-    A == B -> V = true; V = false.
+type_signature(Name, ArgTypes, Type, []) :-
+    builtin(Name, Args, _::Type, _),
+    splitTypes(Args, _, ArgTypes).
 
-type_signature(float64_eq, [float64, float64], bool, []).
-constant_propagation(float64_eq(A::float64, B::float64), V::bool) :-
-    A == B -> V = true; V = false.
+constant_propagation(Func, Val) :-
+    Func =.. [Name | Args],
+    builtin(Name, Args, Val, ConstProp),
+    ConstProp.
 
-type_signature(string_eq, [&string, &string], bool, []).
-constant_propagation(string_eq(A::(&string), B::(&string)), V::bool) :-
-    A == B -> V = true; V = false.
+builtin(int64_eq, [A::int64, B::int64], V::bool, 
+    (A == B -> V = true; V = false)).
 
-type_signature(int64_plus, [int64, int64], int64, []).
-constant_propagation(int64_plus(A::int64, B::int64), V::int64) :- V is A+B.
+builtin(float64_eq, [A::float64, B::float64], V::bool, 
+    (A == B -> V = true; V = false)).
 
-type_signature(float64_plus, [float64, float64], float64, []).
-constant_propagation(float64_plus(A::float64, B::float64), V::float64) :- V is A+B.
+builtin(string_eq, [A::(&string), B::(&string)], V::bool, 
+    (A == B -> V = true; V = false)).
 
-type_signature(int64_minus, [int64, int64], int64, []).
-constant_propagation(int64_minus(A::int64, B::int64), V::int64) :- V is A-B.
+builtin(int64_plus, [A::int64, B::int64], V::int64, (V is A+B)).
+builtin(float64_plus, [A::float64, B::float64], V::float64, (V is A+B)).
 
-type_signature(float64_minus, [float64, float64], float64, []).
-constant_propagation(float64_minus(A::float64, B::float64), V::float64) :- V is A-B.
+builtin(int64_minus, [A::int64, B::int64], V::int64, (V is A-B)).
+builtin(float64_minus, [A::float64, B::float64], V::float64, (V is A-B)).
 
-type_signature(strlen, [&string], int64, []).
-constant_propagation(strlen(S::(&string)), Len::int64) :- string_length(S, Len).
+builtin(strlen, [S::(&string)], Len::int64, string_length(S, Len)).
 
-type_signature(strcat, [string, string], string, []).
-constant_propagation(strcat(S1::string, S2::string), S::string) :- string_concat(S1, S2, S).
+builtin(strcat, [S1::string, S2::string], S::string, string_concat(S1, S2, S)).
 
-type_signature(delete_string, [string, T], T, []).
-constant_propagation(delete_string(_, X), X).
+builtin(delete_string, [_::string, X::T], Y::T, Y=X).
 
 inferTypes([], [], []).
 inferTypes([Arg | Args], [Type | Types], Assumptions) :-
