@@ -2332,7 +2332,7 @@ test(case) :-
         [literal("yes", ret_val::string)],
         [literal("no", ret_val::string)]
     ]), Code),
-    termToC(lines("", ["switch(*(int64_t*)v3) {",
+    termToC(lines("", ["switch (*(int64_t*)v3) {",
                        "  case 0:",
                        "    *ret_val = new std::string(\"yes\");",
                        "    break;",
@@ -2350,7 +2350,6 @@ test(decl) :-
 % Recur maps to a sequence of assignments to aN followed by an assignment to ret_val.
 test(recur) :-
     termToC(recur([var(2)::int64_t, var(1)::list(int64_t)], var(4)::int64_t), Code),
-    writeln(Code),
     termToC(lines("", [
         "a0 = v2;",
         "a1 = v1;",
@@ -2417,7 +2416,7 @@ termToCTerm(call(Name, Args, Guard, Ret),
         [CName, "(", delimited(", ", ArgsWithRet), ");"]) :-
     !getCName(Name, Args, Guard, CName),
     append(Args, [["&", Ret]], ArgsWithRet).
-termToCTerm(case(Expr, Branches), lines("", [["switch(*(int64_t*)", Expr, ") {"],
+termToCTerm(case(Expr, Branches), lines("", [["switch (*(int64_t*)", Expr, ") {"],
                                                 cases(Branches, 0),
                                              "}"])).
 termToCTerm(cases([], _), []).
@@ -2425,16 +2424,16 @@ termToCTerm(cases([Branch | Branches], N),
         lines("", [lines(tab, [["case ", N, ":"],
                     lines(tab, Branch),
                     [tab, "break;"]]),
-                   cases(Branches, N1)])]) :-
+                   cases(Branches, N1)])) :-
     N1 is N + 1.
 termToCTerm(decl(Var, Type), [Type, " ", Var::Type, ";"]).
 termToCTerm(def(Var::Type), [Type, " ", Var::Type]).
 termToCTerm(recur(Args, Ret), lines("", [recur_assign(Args, 0),
                                          ["ret_val = ", Ret, ";"]])).
-termToCTerm(recur_assign([], _), "").
-termToCTerm(recur_assign([First::Type | Rest], N),
+termToCTerm(recur_assign([Arg::Type], N), assign(Arg::Type, arg(N)::Type)).
+termToCTerm(recur_assign([First::Type, Next | Rest], N),
         [lines("", [assign(First::Type, arg(N)::Type)]),
-         recur_assign(Rest, N1)]) :-
+         recur_assign([Next | Rest], N1)]) :-
     N1 is N + 1.
 
 escape(S, Escaped) :-
@@ -2470,9 +2469,11 @@ test(inc) :-
         [
             "void inc7(int64_t a0, int64_t *ret_val) {",
             "  int64_t v0;",
-            "  v0 = 1;",
-            "  int64_plus(a0, v0, &*ret_val);",
-            "  return;",
+            "  while (true) {",
+            "    v0 = 1;",
+            "    int64_plus(a0, v0, &*ret_val);",
+            "    return;",
+            "  }",
             "}"
         ]), Expected),
     Expected == Actual.
@@ -2487,11 +2488,13 @@ test(replace_second) :-
             "void replace_second2(pointer a0, int64_t a1, pointer *ret_val) {",
             "  int64_t v1;",
             "  int64_t v0;",
-            "  v0 = *(int64_t*)(a0 + 0);",
-            "  v1 = *(int64_t*)(a0 + 1);",
-            "  *ret_val = a0;",
-            "  *(int64_t*)(*ret_val + 1) = a1;",
-            "  return;",
+            "  while (true) {",
+            "    v0 = *(int64_t*)(a0 + 0);",
+            "    v1 = *(int64_t*)(a0 + 1);",
+            "    *ret_val = a0;",
+            "    *(int64_t*)(*ret_val + 1) = a1;",
+            "    return;",
+            "  }",
             "}"
         ]), Expected),
     Expected == Actual.
@@ -2510,28 +2513,28 @@ test(increment_list) :-
         "  int64_t v2;",
         "  pointer v1;",
         "  int64_t v0;",
-        "  switch (*a0) {",
-        "    case 0:",
-        "      *ret_val = _sentinel + 0;",
-        "      break;",
-        "    case 1:",
-        "      v0 = *(int64_t*)(a0 + 1);",
-        "      v1 = *(pointer*)(a0 + 2);",
-        "      *ret_val = a0;",
-        "      *(int64_t*)(*ret_val + 0) = 1;",
-        "      v2 = 1;",
-        "      _plus_3(v0, v2, &*(int64_t*)(*ret_val + 1));",
-        "      a0 = v1;",
-        "",
-        "      ret_val = *(pointer*)(*ret_val + 2);",
-        "      break;",
+        "  while (true) {",
+        "    switch (*(int64_t*)a0) {",
+        "      case 0:",
+        "        *ret_val = _sentinel + 0;",
+        "        return;",
+        "        break;",
+        "      case 1:",
+        "        v0 = *(int64_t*)(a0 + 1);",
+        "        v1 = *(pointer*)(a0 + 2);",
+        "        *ret_val = a0;",
+        "        *(int64_t*)(*ret_val + 0) = 1;",
+        "        v2 = 1;",
+        "        _plus_3(v0, v2, &*(int64_t*)(*ret_val + 1));",
+        "        a0 = v1;",
+        "        ret_val = *(pointer*)(*ret_val + 2);",
+        "        break;",
+        "    ",
+        "    }",
         "  }",
         "}"
     ]), Expected),
-    writeln(Expected),
-    writeln(Actual),
     Actual == Expected.
-
 :- end_tests(generateFunction).
 
 generateFunction(Name, Params, Guard, Code) :-
@@ -2553,7 +2556,9 @@ generateFunction(Name, Params, Guard, Code) :-
     !termToC(lines("", [
         ["void ", CName, "(", delimited(", ", ArgDefs), ") {"],
         lines(tab, VarDecls),
-        lines(tab, UAsm),
+        [tab, "while (true) {"],
+        lines([tab, tab], UAsm),
+        [tab, "}"],
         "}"
     ]), Code).
 

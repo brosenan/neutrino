@@ -1,27 +1,28 @@
-class P : parser(T1, T2) where {
-    parse(P, &string, int64, T1) -> list((int64, T2))
+class P : parser(T) where {
+    parse(&P, &string, int64) -> list((int64, T))
 }.
 
 struct empty = empty.
-instance empty : parser(T, T) where {
-    parse(empty, _, N, X) := [(N, X)]
+instance empty : parser(void) where {
+    parse(&empty, _, N) := [(N, void)]
 }.
 
-instance string : parser(T, T) where {
-    parse(Token, Str, N, X) := let << {
-        TokenLen := strlen(&Token);
-        if(substr(Str, N, TokenLen) == Token,
+instance string : parser(void) where {
+    parse(Token, Str, N) := let << {
+        TokenLen := strlen(Token);
+        Candidate := substr(Str, N, TokenLen)
+        if(&Candidate == Token,
             [(N + TokenLen, X)],
-            [])
+            []) del Candidate
     }
 }.
 
 struct charSet(F) = charSet(F).
-F : int64 -> bool =>
-instance charSet(F) : parser(T, (int64, T)) where {
-    parse(charSet(Fn), Str, N, X) := let << {
+F : int64 @> bool =>
+instance charSet(F) : parser(int64) where {
+    parse(&charSet(Fn), Str, N) := let << {
         Char := charAt(Str, N);
-        if(Fn!Char, [(N+1, (Char, X))], [])
+        if(Fn@Char, [(N+1, Char)], [])
     }
 }.
 
@@ -37,42 +38,57 @@ flatten(LL, L) := case LL of {
     [Head | Tail] => flatten(Tail, concat(L, Head))
 }.
 
-P1 : parser(T1, T2), P2 : parser(T2, T3) =>
-instance (P1, P2) : parser(T1, T3) where {
-    parse((P1, P2), Str, N, X) := let << {
-        Parses := parse(P1, Str, N, X);
-        flatten(map(Parses, (N1, Y -> parse(P2, Str, N1, Y))), [])
+P1 : parser(T1), P2 : parser(T2) =>
+instance (Pattern1, Pattern2) : parser((T1, T2)) where {
+    parse(&(Pattern1, Pattern2), Str, N) := 
+        Pattern1 >> parse(Str, N) 
+                 >> map((N1, X) @> Pattern2 >> parse(Str, N1)
+                                            >> map((N2, Y) @> (N2, (X, Y))))
+                 >> flatten
     }
 }.
 
-P1 : parser(T1, T2), P2 : parser(T1, T2) =>
-instance (P1; P2) : parser(T1, T2) where {
-    parse((P1; P2), Str, N, X) := let << {
-        concat(parse(P1, Str, N, copy(&X)), parse(P2, Str, X))
+P1 : parser(T), P2 : parser(T) =>
+instance (P1; P2) : parser(T) where {
+    parse(&(Pattern1; Pattern2), Str, N) := let << {
+        concat(parse(Pattern1, Str, N), parse(Pattern2, Str, N))
     }
 }.
 
-struct capture1(F) = capture1(F).
-F : T1 -> T2 =>
-instance capture1(F) : parser((T1, Tx), (T2, Tx)) where {
-    parse(capture1(F), Str, N, (V, X)) := [(N, (F!V, X))]
+struct capture(P, F) = capture(P, F).
+P : parser(T1), F : T1 @> T2 =>
+instance capture(T1, F) : parser(T2) where {
+    parse(&capture(Pattern, Fn), Str, N) :=
+        Pattern >> parse(Str, N)
+                >> map((N1, X) @> (N1, Fn@X))
 }.
 
-struct capture2(F) = capture2(F).
-F : (T1, T2) -> T3 =>
-instance capture2(F) : parser((T1, T2, Tx), (T3, Tx)) where {
-    parse(capture1(F), Str, N, (V1, V2, X)) := [(N, (F!(V1, V2), X))]
+struct repeat(P) = repeat(P).
+P : parser(T) =>
+instance repeat(P) : parser(list(T)) where {
+    parse(&repeat(Pattern), Str, N) := let << {
+        Rep := repeat(copy(Pattern));
+        [(N, []) | Pattern >> parse(Str, N) 
+                           >> map((N1, X) @> &Rep >> parse(Str, N1)
+                                                  >> map((N2, Y) @> (N2, [X | Y])))]
+        del Rep
+    }
 }.
 
-digit := charSet(C -> C >= 48 /\ C <= 57), capture1(C -> (C - 48, 10)).
-decimal := (digit; digit, decimal, capture2(((I, Scale), (D, Ten))-> (D * Scale + I, Scale*Ten))).
-integer := ("-", decimal, capture1((Value, _) -> -Value);
-            decimal, capture1((Value, _) -> Value)).
-mulSuffix(MulExpr) := (empty;
-                       "*", MulExpr, capture2(Y, X -> X*Y), mulSuffix;
-                       "/", MulExpr, capture2(Y, X -> X/Y), mulSuffix).
-mulExpr := integer, mulSuffix(mulExpr).
-addSuffix(AddExpr) := (empty;
-                       "+", AddExpr, capture2(Y, X -> X + Y), addSuffix;
-                       "-", AddExpr, capture2(Y, X -> X - Y), addSuffix).
-addExpr := mulExpr, addSuffix(addExpr).
+struct recurse(F) = recurse(F).
+F : void @> P, P : parser(T) =>
+instance recurse(F) : parser(T) where {
+    parse(&recurse(Fn), Str, N) := let << {
+        Pattern := Fn@void;
+        parse(&Pattern, Str, N) del Pattern
+    }
+}
+
+digit := capture(charSet(C @> C >= 48 /\ C <= 57), (C @> (C - 48, 10))).
+decimal := capture(repeat(digit), Digits @> decimalValue(Digits, 0)).
+decimalValue(Digits, Val) := case Digits of {
+    [] => Val;
+    [Head | Tail] => decimalValue(Tail, Val * 10 + Head)
+}.
+
+% addExpr := mulExpr, repeat()
