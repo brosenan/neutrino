@@ -311,7 +311,7 @@ builtin(strlen, [S::(&string)], Len::int64, string_length(S, Len)).
 
 builtin(strcat, [S1::string, S2::string], S::string, string_concat(S1, S2, S)).
 
-builtin(delete_string, [_::string, X::T], Y::T, Y=X).
+builtin(delete_string, [_::string], Y::int64, Y=0).
 
 inferTypes([], [], []).
 inferTypes([Arg | Args], [Type | Types], Assumptions) :-
@@ -2622,8 +2622,11 @@ makeArgDefs([Arg | Args], [def(Arg) | ArgDefs]) :-
     ['X'=X, 'N'=N], none).
 :- compileStatement((instance float64 : delete where { X del N := X }),
     ['X'=X, 'N'=N], none).
+:- compileStatement((declare ignore_num(T, int64) -> T), ['T'=T], none).
+:- compileStatement((ignore_num(X, N) := X), ['X'=X, 'N'=N], none).
 :- compileStatement((instance string : delete where 
-    { X del S := delete_string(S, X) }), ['X'=X, 'S'=S], none).
+    { X del S := ignore_num(X, delete_string(S)) }),
+    ['X'=X, 'S'=S], none).
 :- compileStatement((class F:(T1->T2) where { F!T1 -> T2 }),
     ['T1'=T1, 'T2'=T2, 'F'=F], none).
 :- compileStatement((class F:(T1@>T2) where { &F@T1 -> T2 }),

@@ -200,7 +200,7 @@ greet_type(Greeting, Obj) := Greeting + ", " + Obj.
 ```
 
 ```error
-Type mismatch. Expression Obj::string expected to be unknown_type15, inferred: string.
+Type mismatch. Expression Obj::string expected to be unknown_type16, inferred: string.
 ```
 
 When calling a polymorphic function, the compiler checks the assumptions hold for the given types. For example, if we call `greet_type` on a `float64` without first defining `float64` as an instance of `named_type`, we get a compilation error.
@@ -387,7 +387,7 @@ identity_plus_1(X) := X + 1.
 ```
 
 ```error
-Type mismatch. Expression X::int64 expected to be unknown_type15, inferred: int64.
+Type mismatch. Expression X::int64 expected to be unknown_type16, inferred: int64.
 ```
 
 Similarly, when a type is inferred via a class it is also generalized.
@@ -404,7 +404,7 @@ foo_foo_plus_1(X) := foo(foo(X)) + 1.
 ```
 
 ```error
-Type mismatch. Expression foo(foo(X::unknown_type15))+1 expected to be unknown_type17, inferred: int64.
+Type mismatch. Expression foo(foo(X::unknown_type16))+1 expected to be unknown_type18, inferred: int64.
 ```
 ## Polymorphic Instance Definitions
 
