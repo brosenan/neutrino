@@ -2622,10 +2622,10 @@ makeArgDefs([Arg | Args], [def(Arg) | ArgDefs]) :-
     ['X'=X, 'N'=N], none).
 :- compileStatement((instance float64 : delete where { X del N := X }),
     ['X'=X, 'N'=N], none).
-:- compileStatement((declare ignore_num(T, int64) -> T), ['T'=T], none).
-:- compileStatement((ignore_num(X, N) := X), ['X'=X, 'N'=N], none).
+:- compileStatement((declare ignore_int64(T, int64) -> T), ['T'=T], none).
+:- compileStatement((ignore_int64(X, N) := X), ['X'=X, 'N'=N], none).
 :- compileStatement((instance string : delete where 
-    { X del S := ignore_num(X, delete_string(S)) }),
+    { X del S := ignore_int64(X, delete_string(S)) }),
     ['X'=X, 'S'=S], none).
 :- compileStatement((class F:(T1->T2) where { F!T1 -> T2 }),
     ['T1'=T1, 'T2'=T2, 'F'=F], none).
