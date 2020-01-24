@@ -283,8 +283,17 @@ writeln_list(S, []) :-
 
 type_signature(*, [&T], T, [T:basic_type]).
 
-type_signature(==, [T, T], bool, []).
-constant_propagation(A::T==B::T, V::bool) :- A == B -> V = true; V = false.
+type_signature(int64_eq, [int64, int64], bool, []).
+constant_propagation(int64_eq(A::int64, B::int64), V::bool) :-
+    A == B -> V = true; V = false.
+
+type_signature(float64_eq, [float64, float64], bool, []).
+constant_propagation(float64_eq(A::float64, B::float64), V::bool) :-
+    A == B -> V = true; V = false.
+
+type_signature(string_eq, [&string, &string], bool, []).
+constant_propagation(string_eq(A::(&string), B::(&string)), V::bool) :-
+    A == B -> V = true; V = false.
 
 type_signature(int64_plus, [int64, int64], int64, []).
 constant_propagation(int64_plus(A::int64, B::int64), V::int64) :- V is A+B.
@@ -724,7 +733,7 @@ test(case) :-
                      case(X::foobar1,
                         [[destruct(X::foobar1,foo1,['A'::int64]),
                          literal(1,One::int64),
-                         call(==,['A'::int64,One::int64],[],V1::bool),
+                         call(==,['A'::int64,One::int64],[int64:eq],V1::bool),
                          assign(V1::bool, Val)],
                        [destruct(X::foobar1,bar1,[Y::float64]),
                         literal(0,Dummy::int64),
@@ -748,7 +757,7 @@ test(case_ref) :-
                      literal("hello", Hello::string),
                      case(X::foobar2,
                      [[destruct_ref(X::foobar2, foo2, ['A'::(&string)]),
-                       call(==, ['A'::(&string), 'A'::(&string)], [], V1::bool),
+                       call(==, ['A'::(&string), 'A'::(&string)], [(&string):eq], V1::bool),
                        assign(V1::bool, Val)],
                       [destruct_ref(X::foobar2, bar2, [_::(&string)]),
                        construct(false, [], V2::bool),
@@ -2164,7 +2173,7 @@ test(fibonacci) :-
     walk(UAsm, findLocalVars, [], Locals),
     walk(UAsm, declareLocalVars, Locals, _),
     UAsm == [literal(0,var(0)::int64),
-              call(==,[arg(0)::int64,var(0)::int64],[],var(1)::bool),
+              call(==,[arg(0)::int64,var(0)::int64],[int64:eq],var(1)::bool),
               case(var(1)::bool,[
                 [assign(arg(1)::int64,ret_val::int64),
                  return],
@@ -2573,6 +2582,33 @@ makeArgDefs([Arg | Args], [def(Arg) | ArgDefs]) :-
 :- compileStatement((union list(T) = [] + [T | list(T)]), ['T'=T], none).
 :- compileStatement((union maybe(T) = just(T) + none), ['T'=T], none).
 :- compileStatement((struct (A, B) = (A, B)), ['A'=A, 'B'=B], none).
+:- compileStatement((class E : eq where {E == E -> bool}), ['E'=E], none).
+:- compileStatement((instance int64 : eq where {A==B := int64_eq(A, B)}),
+    ['A'=A, 'B'=B], none).
+:- compileStatement((instance float64 : eq where {A==B := float64_eq(A, B)}),
+    ['A'=A, 'B'=B], none).
+:- compileStatement((instance (&string) : eq where {A==B := string_eq(A, B)}),
+    ['A'=A, 'B'=B], none).
+:- compileStatement((instance string : eq where {A==B := string_eq(&A, &B) del A, B}),
+    ['A'=A, 'B'=B], none).
+:- compileStatement((E1:eq, E2:eq =>
+                     instance (E1, E2) : eq where {(A,B)==(C,D) :=
+                                                        if(A==C, 
+                                                             B==D, 
+                                                             (false del B, D))}),
+    ['A'=A, 'B'=B, 'C'=C, 'D'=D, 'E1'=E1, 'E2'=E2], none).
+:- compileStatement((E:eq, E:delete =>
+                     instance maybe(E) : eq where {A==B := case A of {
+                         just(A1) => case B of {
+                             just(B1) => A1 == B1;
+                             none => false del A1
+                         };
+                         none => case B of {
+                             just(_) => false;
+                             none => true
+                         }
+                     }}),
+    ['A'=A, 'B'=B, 'A1'=A1, 'B1'=B1, 'E'=E], none).
 :- compileStatement((class T : plus where { T+T->T }), ['T'=T], none).
 :- compileStatement((instance int64 : plus where { A+B := int64_plus(A, B) }),
     ['A'=A, 'B'=B], none).
