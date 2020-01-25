@@ -2728,18 +2728,23 @@ findAssumptionWithDeps([T1:C1 | Unsorted], Base, T2:C2, RestUnsorted) :-
 }), ['Op'=Op, 'T'=T], none).
 :- forall(builtinImpure(Name, ArgTypes, Type),
           compileBuiltinImpure(Name, ArgTypes, Type)).
-:- compileStatement((declare main(io) -> io), [], none).
-:- compileStatement((union let_io(OP, F) = let_io(OP, F) + done),
+:- compileStatement((declare main(io) -> io, void), [], none).
+:- compileStatement((union let_io(OP, F, T) = let_io(OP, F) + return(T)),
     ['OP'=OP, 'F'=F], none).
 :- compileStatement((
-    OP : io(T), T : delete, F : (T -> NXT), NXT : (io -> io) =>
-    instance let_io(OP, F) : (io -> io) where {
+    OP : io(T), T : delete, F : (T -> NXT), NXT : (io -> io, T1) =>
+    instance let_io(OP, F, T1) : (io -> io, T1) where {
         LetIO!IO := case LetIO of {
             let_io(Op, Fn) => let << {
-                IO1, Ret := do(IO, Op);
-                Fn!Ret!IO1
+                IO1, Res := do(IO, Op);
+                Fn!Res!IO1
             };
-            done => IO
+            return(Ret) => IO, Ret
         }
-    }), ['OP'=OP, 'T'=T, 'F'=F, 'NXT'=NXT, 'LetIO'=LetIO, 
-         'IO'=IO, 'Op'=Op, 'Fn'=Fn, 'IO1'=IO1, 'Ret'=Ret], none).
+    }), ['OP'=OP, 'T'=T, 'T1'=T1, 'F'=F, 'NXT'=NXT, 'LetIO'=LetIO, 
+         'IO'=IO, 'Op'=Op, 'Fn'=Fn, 'IO1'=IO1, 'Res'=Res, 'Ret'=Ret], none).
+:- compileStatement((
+    OP : io(T), T : delete, F : (T -> NXT), NXT : (io -> io, T1) =>
+    instance let_io(OP, F, T1) : io(T1) where {
+        do(IO, LetIO) := LetIO!IO
+    }), ['OP'=OP, 'T'=T, 'T1'=T1, 'F'=F, 'NXT'=NXT, 'LetIO'=LetIO, 'IO'=IO], none).

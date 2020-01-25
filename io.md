@@ -14,7 +14,7 @@ The following is Neutrino's "hello, world" example, which compiles successfully:
 main(IO) := let << {
     IO1, _ := print(IO, "Hello, World!");
     IO1
-}.
+}, void.
 ```
 
 Here is a slightly more elaborate example that also involves receiving input from the user. The following compiles successfully:
@@ -25,10 +25,10 @@ main(IO) := let << {
     IO2, Who := input(IO1);
     IO3, _ := print(IO2, "Hello, " + Who + "!");
     IO3
-}.
+}, void.
 ```
 
-## The `io` Class
+## The `io` Class and the `let_io` Binder
 
 As one can see in the above example, passing the `io` value by hand is not very convenient, and clutters the program. To impure operations easier to perform, Neutrino defines for each impure built-in function a struct of the same name, with one parameter less (omitting the `io` value). For example, the following compiles successfully:
 
@@ -49,7 +49,7 @@ main(IO) := let << {
     IO2, Who := do(IO1, input);
     IO3, _ := do(IO2, print("Hello, " + Who + "!"));
     IO3
-}.
+}, void.
 ```
 
 Obviously, using the `do` notation did not make the code less awkward. However, by isolating `io` as a separate input and output parameter we allow for the `io` value to be threaded outside our code. This is what the `let_io` function does.
@@ -61,6 +61,24 @@ main(IO) := (let_io << {
     _ := print("Who are you?");
     Who := input;
     _ := print("Hello, " + Who + "!");
-    done
+    return(void)
+})!IO.
+```
+
+### Impure Functions
+
+The `let_io` binder allows us to define impure functions, and use them from within one another. For example, let us consider the `prompt` function, which prints a prompt and then reads input from the user. The following compiles successfully:
+
+```prolog
+prompt(Prompt) := let_io << {
+    _ := print(Prompt);
+    Ret := input;
+    return(Ret)
+}.
+
+main(IO) := (let_io << {
+    Who := prompt("Who are you?");
+    _ := print("Hello, " + Who);
+    return(void)
 })!IO.
 ```
