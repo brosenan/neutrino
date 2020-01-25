@@ -36,6 +36,7 @@
 :- discontiguous type_signature/4.
 :- discontiguous class_instance/3.
 :- discontiguous syntacticMacro/2.
+:- discontiguous generated_name/4.
 
 !Goal :- Goal, !.
 !Goal :- throw(unsatisfied(Goal)).
@@ -61,9 +62,9 @@ compileAll(SourceFile, S, Term, VNs) :-
     Term == end_of_file ->
         true
         ;
+        line_count(S, Line),
         catch(
             (
-                line_count(S, Line),
                 !compileStatement(Term, VNs, SourceFile:Line)
             ),
             Exception,
@@ -292,6 +293,10 @@ constant_propagation(Func, Val) :-
     builtin(Name, Args, Val, ConstProp),
     ConstProp.
 
+generated_name(Name, Args, [], NameStr) :-
+    builtin(Name, Args, _, _),
+    atom_string(Name, NameStr).
+
 builtin(int64_eq, [A::int64, B::int64], V::bool, 
     (A == B -> V = true; V = false)).
 
@@ -312,6 +317,13 @@ builtin(strlen, [S::(&string)], Len::int64, string_length(S, Len)).
 builtin(strcat, [S1::string, S2::string], S::string, string_concat(S1, S2, S)).
 
 builtin(delete_string, [_::string], Y::int64, Y=0).
+
+builtin(Name, [_::io | Args], (_, _)::(io, Type), fail) :-
+    builtinImpure(Name, ArgTypes, Type),
+    splitTypes(Args, _, ArgTypes).
+
+builtinImpure(print, [string], void).
+builtinImpure(input, [], string).
 
 inferTypes([], [], []).
 inferTypes([Arg | Args], [Type | Types], Assumptions) :-
@@ -363,6 +375,7 @@ validateType(T) :-
 
 type(Type) :- basicType(Type).
 type(string).
+type(io).
 type(_::type(_)).
 
 basicType(T) :- class_instance(T, basic_type, _).
@@ -1397,21 +1410,28 @@ extractLambda(X, Y, TypeModifier, ClassName, MethodName,
     inferTypeClasses(Assumptions),
     once(lambdaTypesAndArgs(X, YAfterMacros, Types, Args)),
     LambdaStructSig =.. [LambdaName | Types],
-    term_variables([Types, Tx, Ty], TypeVars),
+    term_variables([Types, Tx, Ty], TypeVars1),
+    walk([Types, Tx, Ty], findUniqueVars, [], TypeVars2),
+    append(TypeVars1, TypeVars2, TypeVars),
     LambdaStructType =.. [LambdaName | TypeVars],
     LambdaCons =.. [LambdaName | Args],
     filterMetAssumptions(Assumptions, NeededAssumptions),
+    sortAssumptions(NeededAssumptions, [Ty | Types], SortedAssumptions),
     Class =.. [ClassName, Tx, Ty],
     call(TypeModifier, LambdaCons, LambdaConsMod),
     Method =.. [MethodName, LambdaConsMod, X],
     InstanceDef1 = (instance LambdaStructType : Class where {
         Method := YAfterMacros
     }),
-    (NeededAssumptions = [_|_] ->
-        listToTuple(NeededAssumptions, Context),
+    (SortedAssumptions = [_|_] ->
+        listToTuple(SortedAssumptions, Context),
         InstanceDef = (Context => InstanceDef1)
         ;
         InstanceDef = InstanceDef1).
+
+findUniqueVars(Var::Type, State, [Var::Type | State]) :-
+    atom(Var),
+    \+member(Var::Type, State).
 
 lambdaTypesAndArgs(X, Y, Types, ClosureVars) :-
     walk(Y, findVars, [], VarsInBody),
@@ -1452,9 +1472,13 @@ lambdaMacro(X, Y, TypeModifier, ClassName, MethodName, Replacement) :-
     !unnameVars(StructDef, StructDef1, StructDefVNs),
     replaceInTerm(StructDef1, removeTypes, StructDef2),
     !compileStatement(StructDef2, StructDefVNs, none),
-    !unnameVars(InstanceDef, InstanceDef1, InstanceDefVNs),
+    term_variables(InstanceDef, InstanceDefVars),
+    generateVNs(InstanceDefVars, v, 0, InstanceDefVNs1),
+    !unnameVars(InstanceDef, InstanceDef1, InstanceDefVNs2),
     replaceInTerm(InstanceDef1, removeTypes, InstanceDef2),
-    !compileStatement(InstanceDef2, InstanceDefVNs, none).
+    append(InstanceDefVNs1, InstanceDefVNs2, InstanceDefVNs3),
+    copy_term((InstanceDef2, InstanceDefVNs3), (InstanceDef3, InstanceDefVNs4)),
+    !compileStatement(InstanceDef3, InstanceDefVNs4, none).
 
 removeTypes(Var::_, Var).
 
@@ -1474,7 +1498,10 @@ inferTypeClasses([T:C | Assumptions]) :-
     var(T) ->
         true
         ;
-        class_instance(T, C, InstanceAssumptions),
+        (class_instance(T, C, InstanceAssumptions) ->
+            true
+            ;
+            throw(type_not_instance(T, C))),
         inferTypeClasses(InstanceAssumptions),
         inferTypeClasses(Assumptions).
 
@@ -2469,7 +2496,6 @@ getCName(Name, Args, Guard, CName) :-
 test(inc) :-
     compileStatement((inc(N) := N+1), ['N'=N], test),
     my_assert(generated_name(inc, [_::int64], [], "inc7")),
-    my_assert(generated_name(int64_plus, [_::int64, _::int64], [], "int64_plus")),
     generateFunction(inc, [var(3)::int64], [], Actual),
     termToC(lines("",
         [
@@ -2572,6 +2598,68 @@ makeArgDefs([], []).
 makeArgDefs([Arg | Args], [def(Arg) | ArgDefs]) :-
     makeArgDefs(Args, ArgDefs).
 
+generateVNs([], _, _, []).
+generateVNs([X | Xs], Base, N, [VN=X | VNs]) :-
+    atom_number(NAtom, N),
+    atom_concat(Base, NAtom, VN),
+    N1 is N + 1,
+    generateVNs(Xs, Base, N1, VNs).
+
+compileBuiltinImpure(Name, ArgTypes, Type) :-
+    Struct =.. [Name | ArgTypes],
+    compileStatement((struct Name = Struct), [], none),
+    sameLength(ArgTypes, Args),
+    StructPattern =.. [Name | Args],
+    Func =.. [Name, IO | Args],
+    generateVNs(Args, x, 0, VNs),
+    compileStatement((instance Name : io(Type) where {
+        do(IO, StructPattern) := Func
+    }), ['IO'=IO | VNs], none).
+
+:- begin_tests(sortAssumptions).
+
+% sortAssumptions takes a list of basic known types and a list of assumptions of the
+% form T : C, and sorts the latter in a way such that a term T : C only appears in
+% the list if either T appears in the list of basic known types or it has been
+% introduced as part of a C term in a previous element of the output list.
+
+% For an empty list, an empty list is returned.
+test(empty) :-
+    sortAssumptions([], [_, _, _], L),
+    L == [].
+
+% If for a term T : C, T is not defined anywhere (neither the list of types nor
+% previous C's), an exception is thrown.
+test(no_sort, [throws(assumptions_cannot_be_sorted(T, [X, Y, Z]))]) :-
+    sortAssumptions([T:_], [X, Y, Z], _).
+
+% It sorts assumptions if they are out of order.
+test(sort) :-
+    sortAssumptions([T1:c(T2), T0:c(T1)], [T0], Sorted),
+    Sorted == [T0:c(T1), T1:c(T2)].
+
+:- end_tests(sortAssumptions).
+
+sortAssumptions(Unsorted, Base, Sorted) :-
+    Unsorted = [] ->
+        Sorted = []
+        ;
+        findAssumptionWithDeps(Unsorted, Base, T:C, RestUnsorted) ->
+            Sorted = [T:C | RestSorted],
+            C =.. [_ | ClassArgs],
+            append(ClassArgs, Base, NewBase),
+            sortAssumptions(RestUnsorted, NewBase, RestSorted)
+            ;
+            throw(assumptions_cannot_be_sorted(Unsorted, Base)).
+
+findAssumptionWithDeps([T1:C1 | Unsorted], Base, T2:C2, RestUnsorted) :-
+    member(T, Base), T == T1 ->
+        T2:C2 = T1:C1,
+        RestUnsorted = Unsorted
+        ;
+        RestUnsorted = [T1:C1 | MoreUnsorted],
+        findAssumptionWithDeps(Unsorted, Base, T2:C2, MoreUnsorted).
+
 % ============= Prelude =============
 :- compileStatement((class T : delete where { X del T -> X }),
     ['T'=T, 'X'=X], none).
@@ -2579,6 +2667,7 @@ makeArgDefs([Arg | Args], [def(Arg) | ArgDefs]) :-
 :- compileStatement((union list(T) = [] + [T | list(T)]), ['T'=T], none).
 :- compileStatement((union maybe(T) = just(T) + none), ['T'=T], none).
 :- compileStatement((struct (A, B) = (A, B)), ['A'=A, 'B'=B], none).
+:- compileStatement((struct void = void), [], none).
 :- compileStatement((class E : eq where {E == E -> bool}), ['E'=E], none).
 :- compileStatement((instance int64 : eq where {A==B := int64_eq(A, B)}),
     ['A'=A, 'B'=B], none).
@@ -2634,3 +2723,23 @@ makeArgDefs([Arg | Args], [def(Arg) | ArgDefs]) :-
 :- compileStatement((F : (T1 -> T2) => declare let(T1, F) -> T2),
     ['T1'=T1, 'T2'=T2, 'F'=F], none).
 :- compileStatement((let(V, Fn) := Fn!V), ['V'=V, 'Fn'=Fn], none).
+:- compileStatement((class Op : io(T) where {
+    do(io, Op) -> (io, T)
+}), ['Op'=Op, 'T'=T], none).
+:- forall(builtinImpure(Name, ArgTypes, Type),
+          compileBuiltinImpure(Name, ArgTypes, Type)).
+:- compileStatement((declare main(io) -> io), [], none).
+:- compileStatement((union let_io(OP, F) = let_io(OP, F) + done),
+    ['OP'=OP, 'F'=F], none).
+:- compileStatement((
+    OP : io(T), T : delete, F : (T -> NXT), NXT : (io -> io) =>
+    instance let_io(OP, F) : (io -> io) where {
+        LetIO!IO := case LetIO of {
+            let_io(Op, Fn) => let << {
+                IO1, Ret := do(IO, Op);
+                Fn!Ret!IO1
+            };
+            done => IO
+        }
+    }), ['OP'=OP, 'T'=T, 'F'=F, 'NXT'=NXT, 'LetIO'=LetIO, 
+         'IO'=IO, 'Op'=Op, 'Fn'=Fn, 'IO1'=IO1, 'Ret'=Ret], none).

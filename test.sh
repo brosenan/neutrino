@@ -12,6 +12,7 @@ md_files="simple-expressions.md \
           refs.md \
           lambdas.md \
           syntactic-sugar.md \
+          io.md \
           sequence-example.md \
           dsl-example.md"
 
