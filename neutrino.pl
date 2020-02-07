@@ -318,7 +318,7 @@ builtin(strcat, [S1::string, S2::string], S::string, string_concat(S1, S2, S)).
 
 builtin(delete_string, [_::string], Y::int64, Y=0).
 
-builtin(Name, [_::io | Args], (_, _)::(io, Type), fail) :-
+builtin(Name, [_::io | Args], (_, _)::(io, result(Type)), fail) :-
     builtinImpure(Name, ArgTypes, Type),
     splitTypes(Args, _, ArgTypes).
 
@@ -1403,16 +1403,13 @@ test(lambda_with_case) :-
         just('N'::int64) => 'N'::int64;
         none => 0
     }), =, '->', '!', StructDef, InstanceDef, Replacement),
-    writeln(StructDef),
     StructDef == (struct lambda1 = lambda1),
-    writeln(InstanceDef),
     InstanceDef =@= (instance lambda1 : (maybe(int64) -> int64) where {
         lambda1!('X'::maybe(int64)) := case 'X'::maybe(int64) of {
             just('N'::int64) => 'N'::int64;
             none => 0
         }
     }),
-    writeln(Replacement),
     Replacement == lambda1.
 
 :- end_tests(extractLambda).
@@ -1490,10 +1487,8 @@ syntacticMacro((X@>Y), Replacement) :-
     lambdaMacro(X, Y, makeRef, '@>', '@', Replacement).
 
 lambdaMacro(X, Y, TypeModifier, ClassName, MethodName, Replacement) :-
-    writeln((X -> Y)),
     !extractLambda(X, Y, TypeModifier, ClassName, MethodName,
         StructDef, InstanceDef, Replacement),
-    writeln(InstanceDef),
     !unnameVars(StructDef, StructDef1, StructDefVNs),
     replaceInTerm(StructDef1, removeTypes, StructDef2),
     !compileStatement(StructDef2, StructDefVNs, none),
@@ -2638,8 +2633,8 @@ compileBuiltinImpure(Name, ArgTypes, Type) :-
     Func =.. [Name, IO | Args],
     generateVNs(Args, x, 0, VNs),
     compileStatement((instance Name : proc(io, Type) where {
-        do(IO, StructPattern) := (IO1, RetVal -> IO1, ok(RetVal))!Func
-    }), ['IO'=IO, 'IO1'=IO1, 'RetVal'=RetVal | VNs], none).
+        do(IO, StructPattern) := Func
+    }), ['IO'=IO | VNs], none).
 
 :- begin_tests(sortAssumptions).
 
@@ -2754,25 +2749,23 @@ findAssumptionWithDeps([T1:C1 | Unsorted], Base, T2:C2, RestUnsorted) :-
 }), ['P'=P, 'T'=T, 'IO'=IO], none).
 :- forall(builtinImpure(Name, ArgTypes, Type),
           compileBuiltinImpure(Name, ArgTypes, Type)).
-:- compileStatement((declare main(io) -> io, void), [], none).
+:- compileStatement((declare main(io) -> io, result(void)), [], none).
 :- compileStatement((struct let_io(P, F, T) = let_io(P, F)),
     ['P'=P, 'F'=F, 'T'=T], none).
-:- writeln(1).
 :- compileStatement((
-    P : proc(W, T), T : delete, F : (T -> NXT), NXT : (W -> W, T1) =>
-    instance let_io(P, F, T1) : (W -> W, T1) where {
-        let_io(Op, Fn)!IO := let << {
+    P : proc(W, T), T : delete, F : (T -> NXT), F : delete,
+    NXT : proc(W, T1) =>
+    instance let_io(P, F, T1) : proc(W, T1) where {
+        do(IO, let_io(Op, Fn)) := let << {
             IO1, Res := do(IO, Op);
             case Res of {
-                ok(RetVal) => Fn!RetVal!IO1;
-                error(Err) => error(Err)
+                ok(RetVal) => do(IO1, Fn!RetVal);
+                error(Err) => IO1, error(Err) del Fn
             }
         }
     }), ['P'=P, 'T'=T, 'T1'=T1, 'F'=F, 'NXT'=NXT, 'IO'=IO, 'Op'=Op, 'Fn'=Fn,
-         'IO1'=IO1, 'Res'=Res, 'RetVal'=RetVal, 'W'=W], none).
-:- writeln(2).
-:- compileStatement((
-    OP : proc(W, T), T : delete, F : (T -> NXT), NXT : (W -> W, T1) =>
-    instance let_io(OP, F, T1) : proc(W, T1) where {
-        do(IO, LetIO) := LetIO!IO
-    }), ['OP'=OP, 'T'=T, 'T1'=T1, 'F'=F, 'NXT'=NXT, 'LetIO'=LetIO, 'IO'=IO, 'W'=W], none).
+         'IO1'=IO1, 'Res'=Res, 'RetVal'=RetVal, 'W'=W, 'Err'=Err], none).
+:- compileStatement((struct return(W, T) = return(T)), ['W'=W, 'T'=T], none).
+:- compileStatement((instance return(W, T) : proc(W, T) where {
+    do(World, return(Val)) := World, ok(Val)
+}), ['W'=W, 'T'=T, 'World'=World, 'Val'=Val], none).
