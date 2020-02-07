@@ -1397,6 +1397,24 @@ test(polymorphic_closure) :-
     }),
     Replacement == lambda1('Y'::Ty).
 
+test(lambda_with_case) :-
+    reset_gensym(lambda),
+    extractLambda('X'::maybe(int64), (case 'X'::maybe(int64) of {
+        just('N'::int64) => 'N'::int64;
+        none => 0
+    }), =, '->', '!', StructDef, InstanceDef, Replacement),
+    writeln(StructDef),
+    StructDef == (struct lambda1 = lambda1),
+    writeln(InstanceDef),
+    InstanceDef =@= (instance lambda1 : (maybe(int64) -> int64) where {
+        lambda1!('X'::maybe(int64)) := case 'X'::maybe(int64) of {
+            just('N'::int64) => 'N'::int64;
+            none => 0
+        }
+    }),
+    writeln(Replacement),
+    Replacement == lambda1.
+
 :- end_tests(extractLambda).
 
 extractLambda(X, Y, TypeModifier, ClassName, MethodName,
@@ -1435,7 +1453,8 @@ findUniqueVars(Var::Type, State, [Var::Type | State]) :-
 
 lambdaTypesAndArgs(X, Y, Types, ClosureVars) :-
     walk(Y, findVars, [], VarsInBody),
-    walk(X, findVars, [], VarsInHead),
+    walk(X, findVars, [], VarsInHead1),
+    walk(Y, findVarsInCases, VarsInHead1, VarsInHead),
     (setof(Var, (member(Var, VarsInBody), 
                  \+member(Var, VarsInHead)), ClosureVars); true),
     extractVarTypes(ClosureVars, Types).
@@ -1459,6 +1478,10 @@ filterMetAssumptions([T:C | Assum], AssumOut) :-
 
 
 findVars(Name::Type, State, [Name::Type | State]).
+
+findVarsInCases((Case => _), StateIn, StateOut) :-
+    nonvar(Case),
+    walk(Case, findVars, StateIn, StateOut).
 
 syntacticMacro((X->Y), Replacement) :-
     lambdaMacro(X, Y, =, '->', '!', Replacement).
