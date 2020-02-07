@@ -91,8 +91,38 @@ main(IO) := do(IO, let_io << {
 }).
 ```
 
-<!--
 ### Pure Tests for Impure Functions
 
-One of the most prominent advantages of using the `proc` class for 
--->
+One of the most prominent advantages of wrapping built-in impure functions in instances of the `proc` class is in that it allows us to test the logic of an impure program under pure settings. This is thanks to the fact that `proc` is parametric on the world-representation type. The built-in instances are implemented for the opaque `io` type, but we are free to provide our own instance definitions, making it an instance of other types to represent the world.
+
+For example, to mock input and output behavior, we can use the type `list(string), list(string)`, where the first list contains strings to be read from the input and the second list contains strings printed out by the program.
+
+The following example is the greeting program from before, but with testing based on defining mock behavior for `input` and `print` that takes effect when the world representation is `list(string), list(string)`. It compiles successfully:
+
+```prolog
+prompt(Prompt) := let_io << {
+    _ := print(Prompt);
+    Ret := input;
+    return(Ret)
+}.
+
+greet := let_io << {
+    Who := prompt("Who are you?");
+    _ := print("Hello, " + Who);
+    return(void)
+}.
+
+instance input : proc((list(string), list(string)), string) where {
+    do((In, Out), input) := case In of {
+        [] => ([], Out), error("Premature end of input");
+        [X | Xs] => (Xs, Out), ok(X)
+    }
+}.
+
+instance print : proc((list(string), list(string)), void) where {
+    do((In, Out), print(S)) := (In, [S | Out]), ok(void)
+}.
+
+assert do((["Neutrino"], []), greet) ==
+    (([], ["Hello, Neutrino", "Who are you?"]), ok(void)).
+```

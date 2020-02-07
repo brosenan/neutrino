@@ -2697,12 +2697,27 @@ findAssumptionWithDeps([T1:C1 | Unsorted], Base, T2:C2, RestUnsorted) :-
     ['A'=A, 'B'=B], none).
 :- compileStatement((instance string : eq where {A==B := string_eq(&A, &B) del A, B}),
     ['A'=A, 'B'=B], none).
+:- compileStatement((instance void : eq where {void==void := true}), [], none).
 :- compileStatement((E1:eq, E2:eq =>
                      instance (E1, E2) : eq where {(A,B)==(C,D) :=
                                                         if(A==C, 
                                                              B==D, 
                                                              (false del B, D))}),
-    ['A'=A, 'B'=B, 'C'=C, 'D'=D, 'E1'=E1, 'E2'=E2], none).
+    ['E1'=E1, 'E2'=E2, 'A'=A, 'B'=B, 'C'=C, 'D'=D], none).
+:- compileStatement((T:eq =>
+    instance list(T) : eq where {
+        L1 == L2 := case L1 of {
+            [] => case L2 of {
+                [] => true;
+                [_ | _] => false
+            };
+            [X | Xs] => case L2 of {
+                [] => false del X, Xs;
+                [Y | Ys] => if(X==Y, Xs==Ys, (false del Xs, Ys))
+            }
+        }
+    }),
+    ['T'=T, 'L1'=L1, 'L2'=L2, 'X'=X, 'Xs'=Xs, 'Y'=Y, 'Ys'=Ys], none).
 :- compileStatement((E:eq, E:delete =>
                      instance maybe(E) : eq where {A==B := case A of {
                          just(A1) => case B of {
@@ -2744,6 +2759,20 @@ findAssumptionWithDeps([T1:C1 | Unsorted], Base, T2:C2, RestUnsorted) :-
     ['T1'=T1, 'T2'=T2, 'F'=F], none).
 :- compileStatement((let(V, Fn) := Fn!V), ['V'=V, 'Fn'=Fn], none).
 :- compileStatement((union result(T) = ok(T) + error(string)), ['T'=T], none).
+:- compileStatement((T:eq, T:delete =>
+                     instance result(T) : eq where {
+                        R1 == R2 := case R1 of {
+                            ok(X) => case R2 of {
+                                ok(Y) => X==Y;
+                                error(_) => false del X
+                            };
+                            error(E1) => case R2 of {
+                                ok(_) => false del E1;
+                                error(E2) => E1==E2
+                            }
+                        }
+                     }),
+    ['T'=T, 'R1'=R1, 'R2'=R2, 'X'=X, 'Y'=Y, 'E1'=E1, 'E2'=E2], none).
 :- compileStatement((class P : proc(IO, T) where {
     do(IO, P) -> (IO, result(T))
 }), ['P'=P, 'T'=T, 'IO'=IO], none).
