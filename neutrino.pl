@@ -1490,8 +1490,10 @@ syntacticMacro((X@>Y), Replacement) :-
     lambdaMacro(X, Y, makeRef, '@>', '@', Replacement).
 
 lambdaMacro(X, Y, TypeModifier, ClassName, MethodName, Replacement) :-
+    writeln((X -> Y)),
     !extractLambda(X, Y, TypeModifier, ClassName, MethodName,
         StructDef, InstanceDef, Replacement),
+    writeln(InstanceDef),
     !unnameVars(StructDef, StructDef1, StructDefVNs),
     replaceInTerm(StructDef1, removeTypes, StructDef2),
     !compileStatement(StructDef2, StructDefVNs, none),
@@ -2635,9 +2637,9 @@ compileBuiltinImpure(Name, ArgTypes, Type) :-
     StructPattern =.. [Name | Args],
     Func =.. [Name, IO | Args],
     generateVNs(Args, x, 0, VNs),
-    compileStatement((instance Name : io(Type) where {
-        do(IO, StructPattern) := Func
-    }), ['IO'=IO | VNs], none).
+    compileStatement((instance Name : proc(io, Type) where {
+        do(IO, StructPattern) := (IO1, RetVal -> IO1, ok(RetVal))!Func
+    }), ['IO'=IO, 'IO1'=IO1, 'RetVal'=RetVal | VNs], none).
 
 :- begin_tests(sortAssumptions).
 
@@ -2746,28 +2748,31 @@ findAssumptionWithDeps([T1:C1 | Unsorted], Base, T2:C2, RestUnsorted) :-
 :- compileStatement((F : (T1 -> T2) => declare let(T1, F) -> T2),
     ['T1'=T1, 'T2'=T2, 'F'=F], none).
 :- compileStatement((let(V, Fn) := Fn!V), ['V'=V, 'Fn'=Fn], none).
-:- compileStatement((class Op : io(T) where {
-    do(io, Op) -> (io, T)
-}), ['Op'=Op, 'T'=T], none).
+:- compileStatement((union result(T) = ok(T) + error(string)), ['T'=T], none).
+:- compileStatement((class P : proc(IO, T) where {
+    do(IO, P) -> (IO, result(T))
+}), ['P'=P, 'T'=T, 'IO'=IO], none).
 :- forall(builtinImpure(Name, ArgTypes, Type),
           compileBuiltinImpure(Name, ArgTypes, Type)).
 :- compileStatement((declare main(io) -> io, void), [], none).
-:- compileStatement((union let_io(OP, F, T) = let_io(OP, F) + return(T)),
-    ['OP'=OP, 'F'=F], none).
+:- compileStatement((struct let_io(P, F, T) = let_io(P, F)),
+    ['P'=P, 'F'=F, 'T'=T], none).
+:- writeln(1).
 :- compileStatement((
-    OP : io(T), T : delete, F : (T -> NXT), NXT : (io -> io, T1) =>
-    instance let_io(OP, F, T1) : (io -> io, T1) where {
-        LetIO!IO := case LetIO of {
-            let_io(Op, Fn) => let << {
-                IO1, Res := do(IO, Op);
-                Fn!Res!IO1
-            };
-            return(Ret) => IO, Ret
+    P : proc(W, T), T : delete, F : (T -> NXT), NXT : (W -> W, T1) =>
+    instance let_io(P, F, T1) : (W -> W, T1) where {
+        let_io(Op, Fn)!IO := let << {
+            IO1, Res := do(IO, Op);
+            case Res of {
+                ok(RetVal) => Fn!RetVal!IO1;
+                error(Err) => error(Err)
+            }
         }
-    }), ['OP'=OP, 'T'=T, 'T1'=T1, 'F'=F, 'NXT'=NXT, 'LetIO'=LetIO, 
-         'IO'=IO, 'Op'=Op, 'Fn'=Fn, 'IO1'=IO1, 'Res'=Res, 'Ret'=Ret], none).
+    }), ['P'=P, 'T'=T, 'T1'=T1, 'F'=F, 'NXT'=NXT, 'IO'=IO, 'Op'=Op, 'Fn'=Fn,
+         'IO1'=IO1, 'Res'=Res, 'RetVal'=RetVal, 'W'=W], none).
+:- writeln(2).
 :- compileStatement((
-    OP : io(T), T : delete, F : (T -> NXT), NXT : (io -> io, T1) =>
-    instance let_io(OP, F, T1) : io(T1) where {
+    OP : proc(W, T), T : delete, F : (T -> NXT), NXT : (W -> W, T1) =>
+    instance let_io(OP, F, T1) : proc(W, T1) where {
         do(IO, LetIO) := LetIO!IO
-    }), ['OP'=OP, 'T'=T, 'T1'=T1, 'F'=F, 'NXT'=NXT, 'LetIO'=LetIO, 'IO'=IO], none).
+    }), ['OP'=OP, 'T'=T, 'T1'=T1, 'F'=F, 'NXT'=NXT, 'LetIO'=LetIO, 'IO'=IO, 'W'=W], none).

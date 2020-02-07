@@ -28,7 +28,7 @@ main(IO) := let << {
 }, void.
 ```
 
-## The `io` Class and the `let_io` Binder
+## The `proc` Class and the `let_io` Binder
 
 As one can see in the above example, passing the `io` value by hand is not very convenient, and clutters the program. To impure operations easier to perform, Neutrino defines for each impure built-in function a struct of the same name, with one parameter less (omitting the `io` value). For example, the following compiles successfully:
 
@@ -39,7 +39,7 @@ declare bar -> input.
 bar := input.
 ```
 
-These structs are automatically defined to be instances of the `io` class (not to be confused with the `io` _type_ discussed earlier). This class defines the `do` method which takes an `io` object and an instance (the struct representing the operation), and returns an `io` value and the return value from the operation.
+These structs are automatically defined to be instances of the `proc` class. This class defines the `do` method which takes a world representation (an `io` object, in this case) and a procedure (the struct representing the operation), and returns an `io` value and a `result` containing the return value from the operation or an error.
 
 The following is the I/O example from before, this time using the `do` method instead of directly calling `print` and `input`. It compiles successfully:
 
@@ -82,3 +82,9 @@ main(IO) := (let_io << {
     return(void)
 })!IO.
 ```
+
+<!--
+### Pure Tests for Impure Functions
+
+One of the most prominent advantages of using the `proc` class for 
+-->
